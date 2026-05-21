@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netwatch"
+version = "0.1.0"
+description = "Single-purpose terminal NIDS: detect new devices on the LAN, freeze the host, lock the operator."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Jarvis (for Ratnesh Sharma)" }]
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+    "structlog>=24.1",
+    "bcrypt>=4.1",
+    "textual>=0.58",
+    "scapy>=2.5; platform_system == 'Linux'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[project.scripts]
+netwatch = "netwatch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["netwatch*"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+warn_unused_ignores = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+files = ["netwatch"]
+
+[[tool.mypy.overrides]]
+module = ["scapy.*", "textual.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["netwatch"]
+omit = ["netwatch/__main__.py", "netwatch/tui.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
