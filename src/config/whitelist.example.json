@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "_comment": "EXAMPLE FILE — not loaded at runtime. The real whitelist lives at /etc/usb-defense/whitelist.json (or src/config/whitelist.json before install). Copy entries below as a template and replace VID/PID/Serial with the real values from `lsusb -v` on your authorized USBs.",
+  "devices": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "label": "Admin Backup Drive",
+      "vendor_id": "0951",
+      "product_id": "1666",
+      "serial": "EXAMPLE-KINGSTON-DT100G3-001",
+      "device_class": "MassStorage",
+      "added_by": "admin",
+      "added_at": "2026-05-01T10:00:00+00:00",
+      "can_unlock": true
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "label": "Cybersec Lab USB #3",
+      "vendor_id": "0781",
+      "product_id": "5567",
+      "serial": "EXAMPLE-SANDISK-CRUZER-003",
+      "device_class": "MassStorage",
+      "added_by": "admin",
+      "added_at": "2026-05-02T11:30:00+00:00",
+      "can_unlock": false
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "label": "Operator Spare Key",
+      "vendor_id": "058f",
+      "product_id": "6387",
+      "serial": "EXAMPLE-ALCOR-SPARE-007",
+      "device_class": "MassStorage",
+      "added_by": "admin",
+      "added_at": "2026-05-03T09:15:00+00:00",
+      "can_unlock": true
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000004",
+      "label": "Maintenance Tech Drive",
+      "vendor_id": "13fe",
+      "product_id": "4300",
+      "serial": "EXAMPLE-PLATINET-MAINT-019",
+      "device_class": "MassStorage",
+      "added_by": "admin",
+      "added_at": "2026-05-04T16:45:00+00:00",
+      "can_unlock": false
+    }
+  ]
+}

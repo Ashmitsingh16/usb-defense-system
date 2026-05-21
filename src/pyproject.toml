@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "usbguard-defense"
+version = "0.1.0"
+description = "Whitelist-based USB device guard with full system lockdown for Rocky Linux"
+readme = "../README.md"
+requires-python = ">=3.9"
+authors = [{ name = "USB Defense Project" }]
+license = { text = "MIT" }
+keywords = ["usb", "security", "usbguard", "lockdown", "rocky-linux"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "PyQt5>=5.15.0",
+    "pyudev>=0.24.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+usb-defense-daemon = "usbguard_defense.daemon:main"
+usb-defense-ui = "usbguard_defense.ui.main:main"
+usb-defense-simulate = "usbguard_defense.tests.simulate:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["usbguard_defense*"]
+exclude = ["usbguard_defense.tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["usbguard_defense/tests"]
+python_files = ["test_*.py"]
