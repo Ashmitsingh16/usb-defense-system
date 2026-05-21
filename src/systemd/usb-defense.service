@@ -1,0 +1,36 @@
+[Unit]
+Description=USB Defense Daemon — whitelist enforcement and lockdown
+Documentation=file:///usr/lib/usb-defense/docs/
+After=usbguard.service systemd-udevd.service
+Wants=usbguard.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/usb-defense/venv/bin/python -m usbguard_defense.daemon
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+
+# systemd auto-creates /run/usb-defense (mode 0755) on start and removes it on stop.
+RuntimeDirectory=usb-defense
+RuntimeDirectoryMode=0755
+
+# Security hardening
+User=root
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/etc/usb-defense /var/log/usb-defense /var/lib/usb-defense
+
+# Need access to audio device for alarm. (Note: plugdev is a Debian-only group;
+# on Rocky/RHEL, udev events for non-root come via ACLs/uaccess and User=root
+# already has full /dev/bus/usb access — no plugdev needed.)
+SupplementaryGroups=audio
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=usb-defense
+
+[Install]
+WantedBy=multi-user.target

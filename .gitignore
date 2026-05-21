@@ -1,0 +1,32 @@
+# --- Large bundled assets (not pushable to GitHub) ---
+ISOs/
+Downloads/
+VMs/
+
+# --- Python build artefacts ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# --- Virtualenvs (recreated by scripts/install.sh on the target) ---
+venv/
+.venv/
+
+# --- Editor / tool junk ---
+.vscode/
+.idea/
+.claude/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Runtime state ---
+*.tmp
+*.log
+
+# --- Credentials — never commit ---
+admin.hash
+*.pem
+*.key

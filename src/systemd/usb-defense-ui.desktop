@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=USB Defense
+Comment=USB Defense System — Dashboard & Whitelist Manager
+Exec=/usr/lib/usb-defense/venv/bin/python -m usbguard_defense.ui.main
+Icon=usb-defense
+Terminal=false
+Categories=Security;System;
+StartupNotify=true
+X-GNOME-Autostart-enabled=true
