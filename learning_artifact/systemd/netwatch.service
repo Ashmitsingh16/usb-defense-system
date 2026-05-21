@@ -1,0 +1,42 @@
+[Unit]
+Description=netwatch — LAN intrusion detection daemon
+Documentation=https://github.com/local/netwatch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/netwatch daemon
+Restart=on-failure
+RestartSec=3
+
+# Privilege separation -- addresses Ashmit critical flaw #5.
+User=netwatch
+Group=netwatch
+
+# Capabilities: raw packets for scapy + nftables admin. Nothing else.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @raw-io
+
+ReadWritePaths=/var/log/netwatch /var/lib/netwatch /run/netwatch
+
+[Install]
+WantedBy=multi-user.target
