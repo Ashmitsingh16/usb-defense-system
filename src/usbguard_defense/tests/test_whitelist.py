@@ -164,3 +164,83 @@ class TestWhitelistAddRemove:
         wl.add(e)
         assert wl.remove(e.id) is True
         assert wl.entries == []
+
+
+class TestWhitelistIntegrity:
+    """HMAC sidecar behaviour added in v0.2.0."""
+
+    @staticmethod
+    def _key() -> bytes:
+        return b"k" * 32
+
+    def test_save_without_key_writes_no_sig(self, tmp_whitelist):
+        wl = Whitelist(path=tmp_whitelist)
+        wl.add(WhitelistEntry.new("X", "0001", "0002", "S", "MassStorage", "admin"))
+        assert not wl.sig_path.exists()
+
+    def test_save_with_key_writes_sig(self, tmp_whitelist):
+        wl = Whitelist(path=tmp_whitelist, master_key=self._key())
+        wl.add(WhitelistEntry.new("X", "0001", "0002", "S", "MassStorage", "admin"))
+        assert wl.sig_path.exists()
+        assert wl.sig_path.read_text().strip()  # non-empty
+
+    def test_load_with_key_round_trips(self, tmp_whitelist):
+        key = self._key()
+        wl = Whitelist(path=tmp_whitelist, master_key=key)
+        wl.add(WhitelistEntry.new("X", "0001", "0002", "S", "MassStorage", "admin"))
+        wl2 = Whitelist(path=tmp_whitelist, master_key=key)
+        assert wl2.integrity_failed is False
+        assert len(wl2.entries) == 1
+        assert wl2.entries[0].label == "X"
+
+    def test_load_with_key_but_missing_sig_fails_closed(self, tmp_whitelist):
+        key = self._key()
+        # Write whitelist directly without sig
+        wl = Whitelist(path=tmp_whitelist, master_key=key)
+        # tmp_whitelist already has a populated json from the fixture;
+        # delete any sig that might exist and re-load
+        if wl.sig_path.exists():
+            wl.sig_path.unlink()
+        wl2 = Whitelist(path=tmp_whitelist, master_key=key)
+        assert wl2.integrity_failed is True
+        assert wl2.entries == []
+
+    def test_load_with_key_and_tampered_json_fails_closed(self, tmp_whitelist):
+        key = self._key()
+        wl = Whitelist(path=tmp_whitelist, master_key=key)
+        wl.add(WhitelistEntry.new("Legit", "0001", "0002", "S", "MassStorage", "admin"))
+        # Tamper with the JSON after the sig was written
+        import json
+        data = json.loads(tmp_whitelist.read_text())
+        data["devices"].append({
+            "id": "evil",
+            "label": "Hacker USB", "vendor_id": "dead", "product_id": "beef",
+            "serial": "EVIL", "device_class": "MassStorage",
+            "added_by": "hacker", "added_at": "2026-01-01T00:00:00Z",
+            "can_unlock": True,
+        })
+        tmp_whitelist.write_text(json.dumps(data, indent=2))
+        wl2 = Whitelist(path=tmp_whitelist, master_key=key)
+        assert wl2.integrity_failed is True
+        assert wl2.entries == []
+
+    def test_load_with_wrong_key_fails_closed(self, tmp_whitelist):
+        wl = Whitelist(path=tmp_whitelist, master_key=self._key())
+        wl.add(WhitelistEntry.new("X", "0001", "0002", "S", "MassStorage", "admin"))
+        wl2 = Whitelist(path=tmp_whitelist, master_key=b"different-key-bytes-padded--xxxx")
+        assert wl2.integrity_failed is True
+        assert wl2.entries == []
+
+    def test_corrupted_json_after_valid_sig_still_caught(self, tmp_whitelist):
+        # Edge case: sig is valid for some JSON, but the file on disk
+        # parses to invalid JSON. Should fail closed.
+        key = self._key()
+        wl = Whitelist(path=tmp_whitelist, master_key=key)
+        wl.add(WhitelistEntry.new("X", "0001", "0002", "S", "MassStorage", "admin"))
+        # Write garbage that doesn't match the sig — should be caught
+        # by sig verify first, but if sig was somehow regenerated for
+        # garbage, json parser would catch it.
+        tmp_whitelist.write_bytes(b"not json at all")
+        wl2 = Whitelist(path=tmp_whitelist, master_key=key)
+        assert wl2.integrity_failed is True
+        assert wl2.entries == []

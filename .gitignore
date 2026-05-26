@@ -28,5 +28,12 @@ Thumbs.db
 
 # --- Credentials — never commit ---
 admin.hash
+recovery_seed.hash
+master.key
+whitelist.sig
+# A live whitelist contains real device serials — only the .example.json
+# template should be in the repo. Catch accidental commits of populated
+# starter files at the local repo path.
+src/config/whitelist.json
 *.pem
 *.key

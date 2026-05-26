@@ -19,7 +19,7 @@ color: #c9d1d9
 
 ### Whitelist-enforced USB guard with full-system lockdown for Rocky Linux 9
 
-A defense-grade hardened-workstation security layer
+A defense-grade hardened-workstation security layer (v0.2.0)
 Ratnesh Sharma — Final Year Project
 
 ---
@@ -43,8 +43,12 @@ Ratnesh Sharma — Final Year Project
 | Unauthorized mass storage | Whitelist by VID:PID:Serial → kernel block |
 | Walk-away attack | Full-screen lockdown + alarm + input grab |
 | Lost workstation | Authorized USB key required to unlock |
+| Curious user adds own USB | **argon2id admin password gate** (v0.2) |
+| Root hand-edits whitelist | **HMAC-SHA256 sig, fail-closed** (v0.2) |
+| Operator escapes via Ctrl+Alt+F3 | **X11 DontVTSwitch + getty mask** (v0.2) |
+| Lost every unlock USB + forgot password | **Paper recovery code, one-time** (v0.2) |
 | Audit / forensics | Dual log: journald + append-only flat file |
-| Daemon kill | systemd restart + persistent on-disk lockdown flag |
+| Daemon kill | systemd notify+watchdog + on-disk lockdown flag |
 
 ---
 
@@ -54,7 +58,7 @@ Ratnesh Sharma — Final Year Project
 |---|---|---|
 | BadUSB firmware spoofing of authorized device | Software cannot detect spoofed firmware | Hardware-validated USBs (IronKey) |
 | Offline disk attack | Out of software scope | Full-disk encryption (LUKS) |
-| Adversary with root credentials | Out of scope | Access controls, audit |
+| Rogue root user re-signing the whitelist | Single-machine airgap; needs off-machine audit | Phase 4 SIEM forwarding (requires network) |
 | Hardware keylogger | Software cannot see this | Physical inspection |
 | Insider with authorized USB | Out of scope | DLP, file-level audit |
 
@@ -157,15 +161,17 @@ If any one layer fails, the others still protect.
 
 ---
 
-## What's been built
+## What's been built (v0.2.0)
 
 - ✅ Rocky Linux 9 VM ready (VirtualBox 7.2.8, ISO downloaded)
-- ✅ 19 Python files — daemon (10) + PyQt5 UI (7) + tests (2)
-- ✅ Installer + uninstaller + systemd unit + autostart `.desktop`
+- ✅ 22 Python files — daemon (13) + PyQt5 UI (7) + helper (2)
+- ✅ Installer + setup wizard + uninstaller + hardened systemd unit
 - ✅ Tamper-resistant audit log + dual journald logging
+- ✅ HMAC-signed whitelist, argon2id admin password, paper recovery code
+- ✅ X11 + getty TTY-escape lockdown defense
 - ✅ Alarm sound generated in pure Python stdlib
-- ✅ **38 unit tests, all passing**
-- ✅ 6 documentation files (architecture, runbook, demos, report outline, install, primer)
+- ✅ **88 unit tests, all passing** (4 POSIX-only skipped on dev host)
+- ✅ 9 documentation files (architecture, runbook, demos, report, install, primer, design, acceptance, security)
 
 ---
 
@@ -182,29 +188,27 @@ If any one layer fails, the others still protect.
 
 ---
 
-## Honest limitations
+## Honest limitations (v0.2.0 status)
 
-- Lockdown input-grab is **software-only** — bypassable via TTY switch
-  → real fix: Wayland compositor lock
-- Whitelist editable by **root** — no signed-whitelist yet
-  → roadmap: bcrypt-signed + remote attestation
-- **BadUSB firmware spoofing** of authorized fingerprint defeats us
+- ✅ ~~Lockdown input-grab is software-only~~ — **FIXED in v0.2.0**: X11 `DontVTSwitch` + runtime getty mask blocks `Ctrl+Alt+F<N>`.
+- ✅ ~~Whitelist editable by root with no detection~~ — **FIXED in v0.2.0**: HMAC-SHA256 sig + fail-closed verify. A rogue root with key access can still re-sign — that's the only residual gap, accepted on a single airgapped box.
+- ⚠️ **BadUSB firmware spoofing** of authorized fingerprint defeats us
   → roadmap: hardware-validated USBs at procurement
-- `chattr +a` requires **ext4** — Rocky 9 default is ext4 so OK
+- ⚠️ `chattr +a` requires **ext4** — Rocky 9 default is ext4 so OK on the target
+- ⚠️ Wayland sessions still silently weaken `grabKeyboard` — v0.2 sidesteps by defaulting to X11 at install
 
-All documented in `REPORT_OUTLINE.md` §7.2.
+All documented in `REPORT.md` §7.2 and `PHASE1_DESIGN.md` §2.
 
 ---
 
-## Future work (Phase 2)
+## Future work (post-v0.2.0)
 
-- LDAP/AD integration for multi-user
-- SIEM forwarding via rsyslog
-- Signed whitelist + remote attestation
-- HSM/TPM-bound unlock keys
-- Mobile companion app for unlock approval
+- **Phase 2**: RPM packaging + signed yum repo, pilot on 1–3 office workstations
+- **Phase 3**: YubiKey / hardware token gating for whitelist edits, GPG-signed whitelist with offline admin key
+- **Phase 4**: Off-machine audit-log shipping (requires network — deferred per airgap requirement) to close the rogue-root residual gap
+- **Phase 5**: Two-person rule for whitelist changes (nuclear-launch-style controls)
+- Wayland compositor-level overlay via `gtk-layer-shell` (so Wayland sessions work too)
 - Cross-distro packaging (Debian/Ubuntu)
-- Wayland compositor-level input lock
 
 ---
 
@@ -212,14 +216,19 @@ All documented in `REPORT_OUTLINE.md` §7.2.
 
 | Metric | Value |
 |---|---|
-| Python files | 19 |
-| Unit tests passing | 38 / 38 |
-| Defense layers | 4 |
-| Logging channels | 2 |
-| Daemon-restart latency on kill | < 6 s |
+| Version | 0.2.0 (Phase 1 hardening) |
+| Python files | 22 |
+| Unit tests passing | 88 (4 POSIX-only skipped on dev host) |
+| Defense layers | 6 (kernel, daemon, UI, audit, password gate, HMAC integrity) |
+| Logging channels | 2 (journald + chattr+a flat file) |
+| Daemon-restart latency on kill | ~1 s (`RestartSec=1`) |
+| Watchdog timeout | 30 s |
 | USB insert → overlay latency | ~300 ms |
 | Daemon RSS idle | ~30 MB |
 | Open network ports | 0 |
+| Password hash | argon2id (t=3, m=64 MiB, p=2) |
+| Whitelist sig | HMAC-SHA256, 32-byte key |
+| Recovery code entropy | 80 bits (16 Crockford-Base32) |
 
 ---
 
@@ -230,4 +239,5 @@ All documented in `REPORT_OUTLINE.md` §7.2.
 Questions?
 
 Code: `~/Desktop/USB-Defense-Project/`
-Docs: `docs/{ARCHITECTURE,DEPLOYMENT_RUNBOOK,DEMO_SCENARIOS,REPORT_OUTLINE}.md`
+Docs: `docs/{ARCHITECTURE,PHASE1_DESIGN,DEPLOYMENT_RUNBOOK,DEMO_SCENARIOS,REPORT}.md`
+Security policy: `SECURITY.md`

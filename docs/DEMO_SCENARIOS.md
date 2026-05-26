@@ -4,10 +4,13 @@ Five scripted demonstrations for the final report and viva. Each one takes 2–5
 
 **Setup for every demo:**
 - Rocky Linux VM running, post-install snapshot restored if needed.
+- v0.2.0 setup wizard completed at install (admin password set, paper
+  recovery code written down on paper).
 - Daemon active: `sudo systemctl start usb-defense`.
 - UI running: `usb-defense-py -m usbguard_defense.ui.main`.
 - Live log open in a side terminal: `sudo journalctl -u usb-defense -f`.
-- At least one authorized USB enrolled in the whitelist (marked `can_unlock=true`).
+- At least one authorized USB enrolled in the whitelist via the UI's
+  password-gated Add Device dialog (marked `can_unlock=true`).
 - One unauthorized USB ready to plug.
 
 ---
@@ -76,7 +79,10 @@ Five scripted demonstrations for the final report and viva. Each one takes 2–5
 **What it shows:** the asymmetric trust model — only USBs flagged `can_unlock=true` clear a lockdown; regular authorized USBs do not.
 
 ### Option A — software simulator (no extra hardware needed)
-Run each command from a separate non-locked terminal (SSH from the host works, or use a tty `Ctrl+Alt+F3`).
+Run each command from a separate non-locked terminal. **Note:** in v0.2.0
+the `Ctrl+Alt+F<N>` TTY escape is deliberately blocked (that is in fact
+Demo 6 below), so the practical option here is SSH from the host or
+a second VM session opened *before* the lockdown is triggered.
 
 ```bash
 # 1. Enter lockdown.
@@ -113,7 +119,7 @@ Same flow with two physical USBs: one enrolled with `can_unlock=false`, the othe
    ```bash
    sudo systemctl kill -s SIGKILL usb-defense
    ```
-3. Wait ~5 seconds. systemd auto-restarts the service (`Restart=always`, `RestartSec=5`).
+3. Wait ~1 second. systemd auto-restarts the service (v0.2.0: `Restart=always`, `RestartSec=1`, `WatchdogSec=30`). The restart should be near-instantaneous.
 4. Check the daemon log:
    ```bash
    sudo journalctl -u usb-defense -n 20 --no-pager
@@ -126,7 +132,7 @@ Same flow with two physical USBs: one enrolled with `can_unlock=false`, the othe
   ```
 - On restart, the daemon log shows:
   ```
-  USB Defense daemon v0.1.0 starting
+  USB Defense daemon v0.2.0 starting
   Found persistent lockdown flag — entering lockdown on startup
   ```
 - The lockdown state is restored: `self.locked = True` even though there was no fresh USB event.
@@ -170,6 +176,132 @@ sudo /usr/lib/usb-defense/venv/bin/python -m usbguard_defense.tests.simulate bad
 
 ---
 
+## Demo 6 — Admin-password unlock + TTY escape blocked (new in v0.2.0)
+
+**What it shows:** the operator can recover from a lockdown without
+needing the physical unlock-key USB, AND a curious attacker cannot
+escape to a text console.
+
+**Steps:**
+
+1. Trigger lockdown via simulator:
+   ```bash
+   sudo /usr/lib/usb-defense/venv/bin/python -m usbguard_defense.tests.simulate lockdown
+   ```
+2. Press `Ctrl+Alt+F3` on the keyboard. **Nothing happens** — the X11
+   `DontVTSwitch` option suppresses the VT switch entirely.
+3. On the lockdown overlay, click **"Unlock with admin password"**.
+4. Type the wrong password into the dialog → red text appears on the
+   overlay: *"Wrong password — try again or use the paper code."*
+5. Click the button again, enter the correct password.
+
+**Expected:**
+- Lockdown clears, overlay hides, dashboard turns green.
+- Live log:
+  ```
+  UNLOCK_SUCCESS method=password
+  Lockdown cleared: admin password
+  ```
+- Per-attempt audit trail: failed attempts log `UNLOCK_AUTH_FAILURE`.
+
+**Evidence:** screenshot of the overlay with the inline error after a
+wrong password, followed by the cleared dashboard. `journalctl -u
+usb-defense` showing both the failure and the success line.
+
+---
+
+## Demo 7 — Paper recovery code unlock (new in v0.2.0)
+
+**What it shows:** the worst-case recovery path — admin has lost every
+unlock-key USB AND forgotten the password — and the code is invalidated
+on use so it cannot be replayed.
+
+**Steps:**
+
+1. Have the paper recovery code on hand (the one written down during
+   `setup.py`, or freshly generated via `setup.py --regenerate-recovery`).
+2. Trigger lockdown:
+   ```bash
+   sudo /usr/lib/usb-defense/venv/bin/python -m usbguard_defense.tests.simulate lockdown
+   ```
+3. Click **"Unlock with paper recovery code"** on the overlay.
+4. Type the 16-character code (hyphens optional, lowercase fine).
+
+**Expected:**
+- Lockdown clears.
+- A warning dialog appears: *"The paper recovery code was used to clear
+  this lockdown and has been INVALIDATED."*
+- The hash file is deleted:
+  ```bash
+  sudo ls /etc/usb-defense/recovery_seed.hash    # → no such file
+  ```
+- Trying the same code a second time fails: the file is gone so verify
+  returns False without even hitting the hash.
+
+**Evidence:** screenshot of the consumed-code warning, plus the `ls`
+output proving the hash file is gone, plus a second simulator run
+showing the same code is now rejected.
+
+---
+
+## Demo 8 — Whitelist tamper detection (new in v0.2.0)
+
+**What it shows:** a root user (or a misconfigured backup-restore script)
+that hand-edits `/etc/usb-defense/whitelist.json` cannot insert hostile
+entries silently — the daemon refuses to load any unsigned change.
+
+**Steps:**
+
+1. Confirm the daemon currently trusts the whitelist (status bar in UI
+   does NOT say "tamper detected").
+2. As root, hand-edit the whitelist file:
+   ```bash
+   sudo bash -c 'cat > /etc/usb-defense/whitelist.json <<EOF
+   {
+     "version": 1,
+     "devices": [
+       {
+         "id": "hacker-1",
+         "label": "Hacker USB",
+         "vendor_id": "dead", "product_id": "beef",
+         "serial": "EVIL", "device_class": "MassStorage",
+         "added_by": "hacker", "added_at": "2026-01-01T00:00:00Z",
+         "can_unlock": true
+       }
+     ]
+   }
+   EOF'
+   ```
+3. Restart the daemon:
+   ```bash
+   sudo systemctl restart usb-defense
+   ```
+4. Check the journal:
+   ```bash
+   sudo journalctl -u usb-defense -n 10 --no-pager
+   ```
+
+**Expected:**
+- Log shows:
+  ```
+  Whitelist signature INVALID — possible tamper.
+  Treating whitelist as empty (fail closed).
+  WHITELIST TAMPER DETECTED on startup ...
+  ```
+- The hostile "dead:beef:EVIL" entry is NOT trusted: plug it in (or
+  simulate it) → lockdown triggers.
+- The UI status bar reads "Whitelist tamper detected — daemon refusing
+  to load entries".
+- `events.log` records a `WHITELIST_TAMPER` line.
+
+**Recovery:** re-run setup with `--reset` (preserves entries, regenerates
+key+sig), or manually re-sign by adding entries via the UI again.
+
+**Evidence:** the journal lines proving fail-closed, the events.log
+`WHITELIST_TAMPER` entry, and a screenshot of the UI status bar.
+
+---
+
 ## Bonus mini-demos (if time allows)
 
 ### M1 — Audit log forensics
@@ -205,8 +337,13 @@ Stop the daemon. Open the UI. Confirm the whitelist manager still works, and the
 3. **Demo 2** (unauthorized → lockdown) — the headline.
 4. **Demo 3 Part A** (can_unlock=false fails to unlock).
 5. **Demo 3 Part B** (can_unlock=true clears).
-6. **Demo 4** (paranoid restart) — shows defense-in-depth thinking.
-7. **Demo 5** (BadUSB) — shows scope-aware thinking.
-8. **M2** (append-only log) — shows tamper-resistance thinking.
+6. **Demo 6** (admin password + TTY escape blocked) — shows auth-layer thinking.
+7. **Demo 4** (paranoid restart) — shows defense-in-depth thinking.
+8. **Demo 8** (whitelist tamper) — shows integrity-layer thinking.
+9. **Demo 5** (BadUSB) — shows scope-aware thinking.
+10. **M2** (append-only log) — shows tamper-resistance thinking.
+11. **Demo 7** (paper recovery code) — shows recovery thinking, if time.
 
-Total ≈ 15 minutes of demo, suitable for a 25-minute viva slot.
+Total ≈ 20 minutes of demo, suitable for a 25-minute viva slot. If time
+is tight, drop Demo 7 (the recovery code) — it's the lowest-frequency
+real-world scenario and the easiest one to describe verbally.

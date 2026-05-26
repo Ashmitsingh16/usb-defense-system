@@ -2,6 +2,12 @@
 
 Skeleton for the academic write-up. Each section lists what to put in it, roughly how long, and which artifact in this repo supplies the raw material.
 
+> **Note (2026-05-26):** the actual finished report is in
+> [`REPORT.md`](REPORT.md) (~20 pages, all sections drafted, v0.2.0
+> §7.2 updates landed). This outline is preserved as a planning
+> artifact and for graders who want to see the original structure. If
+> you only need the deliverable, read `REPORT.md`.
+
 **Target length:** 20–30 pages including figures.
 **Audience:** evaluators + senior project guide.
 **Tone:** academic but honest — explicitly state limits, do not over-claim.

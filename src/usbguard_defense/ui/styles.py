@@ -140,4 +140,23 @@ QLabel#lockdownPrompt {
     font-weight: 700;
     qproperty-alignment: AlignCenter;
 }
+QLabel#lockdownError {
+    color: #ff8888;
+    font-size: 18px;
+    font-weight: 600;
+    qproperty-alignment: AlignCenter;
+}
+QPushButton#lockdownButton {
+    background-color: #1a0000;
+    color: #ffcc00;
+    border: 2px solid #ff3333;
+    border-radius: 6px;
+    padding: 12px 24px;
+    font-size: 16px;
+    font-weight: 600;
+}
+QPushButton#lockdownButton:hover {
+    background-color: #2a0000;
+    color: #ffffff;
+}
 """

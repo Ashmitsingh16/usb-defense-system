@@ -1,4 +1,13 @@
-"""Daemon ↔ UI inter-process communication via Unix socket + JSON lines."""
+"""Daemon ↔ UI inter-process communication via Unix socket + JSON lines.
+
+v0.2.0: the socket is now mode 0660 owned by `root:usbdefense` so only
+processes whose user is in the `usbdefense` group can connect. If the
+group does not exist (older install, manual deploy), we fall back to
+0666 with a loud warning — better permissive-and-usable than tight-and-
+broken on a workstation. install.sh creates the group and adds the
+SUDO_USER to it; new operators must be added with
+`sudo usermod -a -G usbdefense <username>`.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +18,11 @@ import socket
 import threading
 from pathlib import Path
 from typing import Callable, Optional
+
+try:
+    import grp  # POSIX-only; the group lookup is a Linux feature
+except ImportError:
+    grp = None  # type: ignore[assignment]
 
 from .config import IPC_SOCKET
 
@@ -35,9 +49,44 @@ class IPCServer:
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._sock.bind(str(self.socket_path))
         self._sock.listen(8)
-        os.chmod(self.socket_path, 0o666)  # any local user can connect; for production, use a dedicated usbdefense group + 0660
+        self._apply_socket_permissions()
         self._thread = threading.Thread(target=self._accept_loop, daemon=True, name="IPCServer")
         self._thread.start()
+
+    def _apply_socket_permissions(self) -> None:
+        """Tight default (0660 root:usbdefense) with graceful fallback to 0666."""
+        gid = self._lookup_usbdefense_gid()
+        if gid is not None:
+            try:
+                os.chown(self.socket_path, 0, gid)
+                os.chmod(self.socket_path, 0o660)
+                return
+            except (PermissionError, OSError) as exc:
+                log.warning(
+                    "Could not chown socket to root:usbdefense (%s); "
+                    "falling back to 0666 — anyone on this host can connect.",
+                    exc,
+                )
+        else:
+            log.warning(
+                "Group 'usbdefense' does not exist on this host; falling "
+                "back to socket mode 0666. Run `sudo groupadd usbdefense` "
+                "and `sudo usermod -a -G usbdefense <ui-user>` then "
+                "restart the daemon to tighten this.",
+            )
+        try:
+            os.chmod(self.socket_path, 0o666)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _lookup_usbdefense_gid() -> Optional[int]:
+        if grp is None:
+            return None
+        try:
+            return grp.getgrnam("usbdefense").gr_gid
+        except (KeyError, OSError):
+            return None
 
     def stop(self) -> None:
         self._stop.set()

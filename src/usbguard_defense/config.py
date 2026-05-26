@@ -11,7 +11,10 @@ import yaml
 
 CONFIG_PATH = Path(os.environ.get("USB_DEFENSE_CONFIG", "/etc/usb-defense/config.yaml"))
 WHITELIST_PATH = Path("/etc/usb-defense/whitelist.json")
+WHITELIST_SIG_PATH = Path("/etc/usb-defense/whitelist.sig")
 ADMIN_HASH_PATH = Path("/etc/usb-defense/admin.hash")
+RECOVERY_SEED_HASH_PATH = Path("/etc/usb-defense/recovery_seed.hash")
+MASTER_KEY_PATH = Path("/etc/usb-defense/master.key")
 EVENT_LOG_PATH = Path("/var/log/usb-defense/events.log")
 RUNTIME_DIR = Path("/run/usb-defense")
 IPC_SOCKET = RUNTIME_DIR / "ipc.sock"
@@ -34,6 +37,13 @@ class Config:
     auto_block_unknown: bool = True
     audit_journald: bool = True
     audit_flat_file: bool = True
+    # Simulator: allows tests/simulate.py to drive lockdown enter/clear via
+    # IPC without real USB hardware. Required for the academic-project
+    # viva demos (Demos 3, 5, 6, 7, 8 use it). MUST be False in a real
+    # pilot deployment because anyone in the usbdefense group can
+    # otherwise bypass the password gate by faking a `lockdown_clear`
+    # event.
+    simulator_enabled: bool = True
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:

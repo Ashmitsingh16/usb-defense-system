@@ -1,4 +1,11 @@
-"""Whitelist management UI."""
+"""Whitelist management UI.
+
+v0.2.0: add/remove now goes through the daemon over IPC and requires the
+admin password. The widget prompts for the password, then hands data +
+password to a caller-supplied submit_add / submit_remove callable. The
+caller (MainWindow) is responsible for actually sending the IPC command
+and refreshing the list on success.
+"""
 
 from __future__ import annotations
 
@@ -6,22 +13,22 @@ from typing import Callable
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
-    QVBoxLayout, QWidget,
+    QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 
 class WhitelistManagerWidget(QWidget):
-    """Lists whitelist; supports add/remove via prompt."""
+    """Lists whitelist; supports add/remove via daemon over IPC."""
 
     def __init__(self, get_entries: Callable[[], list[dict]],
-                 add_entry: Callable[[dict], None],
-                 remove_entry: Callable[[str], None]):
+                 submit_add: Callable[[dict, str], None],
+                 submit_remove: Callable[[str, str], None]):
         super().__init__()
         self._get_entries = get_entries
-        self._add_entry = add_entry
-        self._remove_entry = remove_entry
+        self._submit_add = submit_add
+        self._submit_remove = submit_remove
         self._build()
         self.refresh()
 
@@ -31,8 +38,12 @@ class WhitelistManagerWidget(QWidget):
         heading.setObjectName("headingLabel")
         layout.addWidget(heading)
 
-        sub = QLabel("Devices listed below are allowed to connect. Others trigger lockdown.")
+        sub = QLabel(
+            "Devices listed below are allowed to connect. Others trigger "
+            "lockdown. Add / remove requires the admin password."
+        )
         sub.setObjectName("subheadingLabel")
+        sub.setWordWrap(True)
         layout.addWidget(sub)
 
         self.list_widget = QListWidget()
@@ -66,12 +77,30 @@ class WhitelistManagerWidget(QWidget):
             item.setData(Qt.UserRole, entry["id"])
             self.list_widget.addItem(item)
 
+    def show_status(self, message: str, error: bool = False) -> None:
+        """Briefly surface daemon feedback in a non-modal message box."""
+        kind = QMessageBox.Critical if error else QMessageBox.Information
+        QMessageBox(kind, "Whitelist", message, parent=self).exec_()
+
+    def _prompt_password(self, prompt: str) -> str | None:
+        pw, ok = QInputDialog.getText(
+            self, "Admin Password Required", prompt, QLineEdit.Password,
+        )
+        if not ok or not pw:
+            return None
+        return pw
+
     def _on_add(self) -> None:
         dlg = AddDeviceDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
-            data = dlg.values()
-            self._add_entry(data)
-            self.refresh()
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        data = dlg.values()
+        pw = self._prompt_password(
+            f"Confirm adding '{data['label']}' — enter admin password:"
+        )
+        if pw is None:
+            return
+        self._submit_add(data, pw)
 
     def _on_remove(self) -> None:
         item = self.list_widget.currentItem()
@@ -80,12 +109,16 @@ class WhitelistManagerWidget(QWidget):
         entry_id = item.data(Qt.UserRole)
         confirm = QMessageBox.question(
             self, "Confirm Remove",
-            "Remove this device from the whitelist?\nIt will be blocked next time it's plugged in.",
+            "Remove this device from the whitelist?\n"
+            "It will be blocked next time it's plugged in.",
             QMessageBox.Yes | QMessageBox.No,
         )
-        if confirm == QMessageBox.Yes:
-            self._remove_entry(entry_id)
-            self.refresh()
+        if confirm != QMessageBox.Yes:
+            return
+        pw = self._prompt_password("Enter admin password to remove this device:")
+        if pw is None:
+            return
+        self._submit_remove(entry_id, pw)
 
 
 class AddDeviceDialog(QDialog):
@@ -114,7 +147,10 @@ class AddDeviceDialog(QDialog):
         layout.addRow("Device Class:", self.class_input)
         layout.addRow("", self.unlock_check)
 
-        hint = QLabel("Tip: plug in the USB and run <code>lsusb -v</code> in a terminal to find these values.")
+        hint = QLabel(
+            "Tip: plug in the USB and run <code>lsusb -v</code> in a "
+            "terminal to find these values."
+        )
         hint.setObjectName("subheadingLabel")
         hint.setWordWrap(True)
         layout.addRow(hint)

@@ -1,6 +1,81 @@
 # Where the project is, right now
 
-**Updated 2026-05-21** — all 5 demos captured, two honest caveats added to the report (Wayland input-grab, persistent-flag placeholders).
+**Updated 2026-05-26** — Phase 1 security hardening complete. v0.2.0 is code-complete and unit-tested; VM acceptance is the only remaining gate before the tag lands.
+
+## Today's milestones (2026-05-26)
+
+Worked through a 7-item Phase 1 hardening plan to lift v0.1.4 from "academic prototype" toward "pilot-ready for a defense contractor". Constraints honored: zero budget, fully offline (no network code), keep scope tight.
+
+- ✅ **Admin password gate** — `auth.py` with argon2id (t=3, m=64 MiB, p=2), refuses verify if file permissions are weaker than 0600. Min 8 chars enforced. Adds 12 tests.
+- ✅ **HMAC-signed whitelist** — `integrity.py` + `whitelist.py` integration. `whitelist.sig` sidecar, key at `master.key` (0600 root). Daemon verifies on every load; tamper → `WHITELIST_TAMPER` event + fail-closed (empty list, every USB locks). Adds 17 tests (10 integrity + 7 whitelist).
+- ✅ **Paper recovery code** — `recovery.py`. 16-char Crockford Base32 (no I/L/O/U), one-time use, argon2id-hashed at rest. Forgiving normalizer handles transcription mistakes. Adds 13 tests.
+- ✅ **TTY escape blocked** — `tty_lockdown.py` + `xorg-novtswitch.conf`. Combined: X server ignores VT-switch combos AND daemon masks `getty@tty2..6` during active lockdown. Q8 in viva cheatsheet now has a positive answer.
+- ✅ **Hardened systemd unit** — `Type=notify`, `WatchdogSec=30`, `RestartSec=1`, kernel-protect flags, MemoryDenyWriteExecute, RestrictNamespaces, etc. Daemon sends READY/WATCHDOG/STOPPING via inline `sd_notify` (no new dependency).
+- ✅ **X11 default at install** — installer drops Wayland in GDM, installs `xorg-x11-server-Xorg`. Closes WAY-1 by default; Wayland is opt-in for users who explicitly switch back.
+- ✅ **Setup wizard ceremony** — `scripts/setup.py`. Idempotent only with `--reset`; `--regenerate-recovery` for the rotate-after-use case. Invoked as final step of `install.sh`.
+- ✅ **UI password gates + new IPC commands** — whitelist Add/Remove require password through new daemon commands `add_whitelist_entry` / `remove_whitelist_entry`. Lockdown overlay has two new unlock buttons (admin password / paper code) that temporarily release the keyboard grab so input dialogs work, then re-grab on dismiss. Legacy `force_unlock` env-var trapdoor removed.
+- ✅ **Test count**: 54 → **82 passing**, 4 POSIX-only skipped (will execute on the VM). Cross-platform unit tests cover all new modules.
+- ✅ **Docs**: `PHASE1_DESIGN.md` for senior review, `PHASE1_ACCEPTANCE.md` with the VM checklist, REPORT §7.2 updated (TTY-escape and whitelist-anti-spoof items marked RESOLVED), `VIVA_CHEATSHEET.md` refreshed (Q4 and Q8 reframed; Q11 and Q12 added on auth and paper code), CHANGELOG v0.2.0 entry, uninstall.sh updated to clean up new files.
+
+## Files added in v0.2.0
+
+```
+src/usbguard_defense/auth.py                                 NEW
+src/usbguard_defense/integrity.py                            NEW
+src/usbguard_defense/recovery.py                             NEW
+src/usbguard_defense/tty_lockdown.py                         NEW
+src/usbguard_defense/tests/test_auth.py                      NEW
+src/usbguard_defense/tests/test_integrity.py                 NEW
+src/usbguard_defense/tests/test_recovery.py                  NEW
+src/scripts/setup.py                                         NEW
+src/config/xorg-novtswitch.conf                              NEW
+docs/PHASE1_DESIGN.md                                        NEW
+docs/PHASE1_ACCEPTANCE.md                                    NEW
+```
+
+## Files changed in v0.2.0
+
+```
+src/usbguard_defense/__init__.py                  v0.1.0 → v0.2.0
+src/usbguard_defense/config.py                    + 3 path constants
+src/usbguard_defense/daemon.py                    sd_notify, new IPC cmds, master key + tamper handling
+src/usbguard_defense/whitelist.py                 optional HMAC verify on load
+src/usbguard_defense/ui/main.py                   IPC-driven add/remove, password handlers
+src/usbguard_defense/ui/lockdown.py               unlock buttons + signals
+src/usbguard_defense/ui/whitelist_mgr.py          password prompts
+src/usbguard_defense/ui/styles.py                 lockdown button + error label
+src/usbguard_defense/tests/test_whitelist.py      + 7 integrity tests
+src/systemd/usb-defense.service                   hardened
+src/scripts/install.sh                            9 steps now, X11 + setup wizard
+src/scripts/uninstall.sh                          clean up new files, unmask getty
+src/pyproject.toml + requirements.txt             + argon2-cffi
+CHANGELOG.md                                      v0.2.0 entry
+docs/REPORT.md                                    §7.2 updated, test count corrected
+docs/VIVA_CHEATSHEET.md                           Q4, Q8 reframed; Q11, Q12 added
+```
+
+## What's left for you (item 8 — the one thing only you can do)
+
+**Open `docs/PHASE1_ACCEPTANCE.md` and run sections A–H on the Rocky VM.**
+~30 minutes. It walks through: sync code, run install + setup wizard,
+restart daemon, confirm UI connects, simulate lockdown, unlock via
+password, unlock via paper code, hand-edit whitelist and watch the
+daemon refuse it. If anything fails, paste `journalctl -u usb-defense -n 100`.
+
+After acceptance passes:
+```
+git add -A
+git commit -m "v0.2.0 — Phase 1 security hardening"
+git tag -a v0.2.0 -m "Phase 1: admin auth, HMAC whitelist, paper recovery, TTY block"
+```
+
+Then show your senior. PHASE1_DESIGN.md + the updated REPORT §7.2 +
+the new VIVA_CHEATSHEET answers are your case for "ready for a small
+pilot".
+
+---
+
+## Previous milestones (2026-05-21)
 
 ## Today's milestones (2026-05-21)
 

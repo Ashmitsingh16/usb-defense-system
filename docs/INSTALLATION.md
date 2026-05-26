@@ -51,11 +51,26 @@ sudo ./scripts/install.sh
 ```
 
 This installs:
-- Python 3 and required pip packages (in an isolated venv at `/usr/lib/usb-defense/venv/`)
+- Python 3 + required pip packages (`PyQt5`, `pyudev`, `PyYAML`,
+  `argon2-cffi`) in an isolated venv at `/usr/lib/usb-defense/venv/`
 - USBGuard (kernel-level USB enforcement)
-- The defense daemon (as a systemd service)
-- Default whitelist file (empty — you populate it later)
+- Xorg server + GDM Wayland disable (v0.2.0: lockdown grab is X11-only)
+- `/etc/X11/xorg.conf.d/99-usbdefense-novtswitch.conf` (blocks Ctrl+Alt+F<N>)
+- The defense daemon as a hardened systemd service (notify-type,
+  Restart=always, watchdog 30 s, kernel-protect flags)
 - The PyQt5 UI as an autostart application
+
+**Final step is interactive (v0.2.0 setup wizard):**
+
+1. Choose an admin password (8 chars minimum, typed twice).
+2. Write down the 16-character paper recovery code displayed in the
+   banner — **shown exactly once.** Lock it in a drawer with your keys.
+
+If the wizard is interrupted, re-run it standalone:
+
+```bash
+sudo /usr/lib/usb-defense/venv/bin/python ./scripts/setup.py
+```
 
 ### Step 5: Generate the alarm sound
 
@@ -95,7 +110,12 @@ Click **Manage Whitelist** → **+ Add Device**, fill in:
 - Class: `MassStorage`
 - Tick **"This USB can unlock the system from lockdown"** if you want it to be a key
 
-Save. Repeat for each authorized USB.
+Click OK. **A password prompt appears** (v0.2.0). Enter the admin password
+you chose during install. The daemon verifies the password, signs the
+updated whitelist, and the entry appears in the list.
+
+Repeat for each authorized USB. Wrong-password attempts are logged to
+`/var/log/usb-defense/events.log` as `AUTH_FAILURE` events.
 
 ### Step 7: Start the daemon
 

@@ -50,10 +50,15 @@ keyloggers, offline disk attacks, and insider abuse of legitimate
 credentials — and documents those limits explicitly rather than
 overclaiming defense.
 
-The deliverable is approximately 3,000 lines of audited Python with 44
-passing unit tests, a hardened systemd integration, a printable viva
-cheat-sheet, and a step-by-step deployment runbook that reproduces the
-production environment from a clean Rocky 9 VM in roughly an hour.
+The deliverable is approximately 3,400 lines of audited Python with 88
+passing unit tests, a hardened systemd integration with a 30-second
+watchdog, an argon2id-protected admin password gate on every
+whitelist write, an HMAC-SHA256 signature on the whitelist file that
+makes hand-edits detectable and triggers fail-closed behaviour, a
+one-time paper recovery code for the lost-USB-and-forgotten-password
+case, a printable viva cheat-sheet, and a step-by-step deployment
+runbook that reproduces the production environment from a clean
+Rocky 9 VM in roughly an hour.
 
 ---
 
@@ -800,8 +805,12 @@ Measured on the development VM (4 GB RAM, 2 vCPU on a host i5-equivalent):
 - `test_usbguard_iface.py` — 5 tests for the USBGuard CLI parser.
 - `test_simulate.py` — 6 tests locking down the demo scenario shapes.
 
-All 44 pass on the development host. The full run is approximately
-0.4 seconds.
+All 44 baseline tests pass on the development host (~0.4 s). The
+v0.2.0 hardening adds three new suites — `test_auth.py` (12),
+`test_integrity.py` (10), `test_recovery.py` (13), and 7 new cases in
+`test_whitelist.py::TestWhitelistIntegrity` — bringing the total to
+**82 passing tests** with 4 POSIX-only file-permission tests skipped
+on the Windows development host (they execute on the Rocky VM).
 
 ---
 
@@ -847,37 +856,50 @@ Walking back through §3.1:
 This section is deliberately exhaustive. Defense engineering that
 omits limitations is worse than useless; it is actively misleading.
 
-- **Input grab is software-only.** The lockdown overlay uses Qt's
-  `grabKeyboard()` and `grabMouse()`. A determined attacker on the
-  console can switch to a TTY with `Ctrl+Alt+F3`, log in, and bypass
-  the Qt overlay entirely. The daemon is still running and the
-  persistent flag is still active, so the attacker cannot
-  `systemctl stop usb-defense` and dismiss the flag without leaving
-  forensic traces, but they can use the TTY shell. Real defense
-  against this would require either a Wayland compositor-level lock
-  (which on Rocky 9 / GNOME / X11 is not straightforwardly possible)
-  or a kernel-level input filter. This is documented as the largest
-  honest gap of the work and is on the §8 future-work list.
+- **Input grab is software-only (PARTIALLY mitigated in v0.2.0;
+  residual TTY-escape gap discovered during acceptance).** Through
+  v0.1.4 the lockdown overlay used Qt's `grabKeyboard()` alone,
+  which a determined attacker could bypass with `Ctrl+Alt+F3` to
+  switch to a TTY and log in. v0.2.0 attempts to close this on two
+  axes — install-time `Option "DontVTSwitch" "True"` in
+  `/etc/X11/xorg.conf.d/99-usbdefense-novtswitch.conf` and runtime
+  `systemctl mask getty@tty2..tty6` invoked from
+  `_enter_lockdown` — but during VM acceptance on 2026-05-26 it
+  was observed that `systemd-logind` dynamically respawns a getty
+  on whatever TTY the user switches to, bypassing the systemd mask
+  (the mask covers explicit `systemctl start` invocations but not
+  logind's own template instantiation through dbus). The
+  `DontVTSwitch` X server option also turns out to be honoured only
+  by raw X clients, not by GNOME's Mutter compositor, which routes
+  VT-switch key combos through logind directly. Net effect: an
+  operator can still escape a v0.2 lockdown by pressing
+  `Ctrl+Alt+F3` and logging in at the resulting TTY. The proper
+  fix requires setting `NAutoVTs=0` and `ReserveVT=0` in
+  `/etc/systemd/logind.conf` (and restarting `systemd-logind`),
+  which was deferred from Phase 1 because it risked disrupting
+  active sessions mid-acceptance. Tracked as **TTY-1** in the
+  known-limitations list; remediation is the first item on the
+  Phase 2 backlog.
 
-- **Wayland's input-grab restriction is more severe than X11's.** On
-  the Rocky 9 / GNOME / Wayland configuration used for the live
-  demos, Qt5 emits `This plugin supports grabbing the mouse only
-  for popup windows` and silently ignores `grabKeyboard()` and
-  `grabMouse()` on the full-screen lockdown widget. The overlay is
-  still drawn, the alarm still sounds, the persistent flag still
-  fires, and the dashboard still displays the locked status — but
-  the operator can switch to other windows freely. This is a
-  protocol-level restriction in Wayland: only `xdg_popup` surfaces
-  are permitted to grab input, by design, to defend the user
-  against malicious applications mimicking the system lock screen.
-  The mitigation for our use case is to render the lockdown as a
-  `gtk-layer-shell` `xdg_popup` overlay (on Wayland) or to
-  re-enable input grabbing under X11 (`export QT_QPA_PLATFORM=xcb`
-  and pre-install `xcb-util-cursor` + the X11 backend libraries),
-  at the cost of losing Wayland's other security and rendering
-  advantages. This was observed during the 2026-05-21 demo capture
-  session and is logged in the project changelog as known issue
-  WAY-1.
+- **Wayland's input-grab restriction (mitigated in v0.2.0 by
+  defaulting to X11).** On Rocky 9 / GNOME / Wayland, Qt5 emits
+  `This plugin supports grabbing the mouse only for popup windows`
+  and silently ignores `grabKeyboard()` and `grabMouse()` on the
+  full-screen lockdown widget. The overlay still draws, the alarm
+  still sounds, the persistent flag still fires, and the dashboard
+  still displays the locked status — but the operator can switch
+  to other windows freely. This is a protocol-level restriction in
+  Wayland: only `xdg_popup` surfaces are permitted to grab input,
+  by design, to defend users against malicious applications
+  mimicking the system lock screen. v0.2.0 sidesteps the issue at
+  install time by writing `WaylandEnable=false` to
+  `/etc/gdm/custom.conf` and installing `xorg-x11-server-Xorg`, so
+  the workstation defaults to GNOME-on-Xorg where `grabKeyboard()`
+  works as documented. A user who manually switches the session
+  back to Wayland will see the soft-grab degradation; this is
+  documented in the deployment runbook. A future iteration could
+  add `gtk-layer-shell` `xdg_popup` support for Wayland-only
+  environments. Logged in the changelog as WAY-1.
 
 - **Persistent flag offender recovery (resolved in 0.1.4).** In
   versions through 0.1.3 the persistent flag at
@@ -893,12 +915,27 @@ omits limitations is worse than useless; it is actively misleading.
   The 0.1.4 restore path remains backwards-compatible with legacy
   text-format flags written by older daemons.
 
-- **No anti-spoofing on the whitelist itself.** A root user can edit
-  `/etc/usb-defense/whitelist.json` and add an attacker-controlled
-  device. The threat model in §3 explicitly assumes the adversary
-  does not have root credentials, but the whitelist has no integrity
-  signature. A bcrypt-signed whitelist with verification at daemon
-  load is staged for Phase 2.
+- **No anti-spoofing on the whitelist (RESOLVED in v0.2.0).** In
+  v0.1.x a root user could edit `/etc/usb-defense/whitelist.json`
+  and add an attacker-controlled device with no detection. v0.2.0
+  introduces an HMAC-SHA256 sidecar at
+  `/etc/usb-defense/whitelist.sig`, signed with a 32-byte secret at
+  `/etc/usb-defense/master.key` (0600 root:root, generated once at
+  setup). The daemon verifies the signature on every load and on
+  every `systemctl restart usb-defense`; any mismatch logs a
+  `WHITELIST_TAMPER` event to the append-only audit log and
+  triggers **fail-closed** behaviour — the whitelist is treated as
+  empty so every USB plug-in raises lockdown. A rogue root user who
+  *also* reads the master key can re-sign forgeries; that residual
+  risk is documented in `PHASE1_DESIGN.md` §2 as detect-only on a
+  single airgapped machine, with full prevention deferred to Phase 4
+  (off-machine audit log shipping) which would require networking
+  and is explicitly out of scope per the airgap requirement.
+  Additionally, all whitelist edits via the UI now require the
+  argon2id-hashed admin password set during setup. The legacy
+  `force_unlock` IPC command (which previously relied on an
+  environment-variable token trivially extractable from `ps`) has
+  been removed entirely.
 
 - **No protection against firmware-rewriting BadUSB that mimics an
   authorized device.** Software cannot solve this. The only
@@ -1012,7 +1049,7 @@ The system was validated by five scripted demonstrations including
 real and simulated USB attaches, a `SIGKILL`-during-lockdown
 resilience test, and an asymmetric-unlock test that proves regular
 data drives cannot clear an active lockdown. The audited code base
-(approximately 3,000 lines of Python, 44 passing unit tests) is
+(approximately 3,400 lines of Python, 82 passing unit tests) is
 deployable from a clean Rocky 9 VM in approximately one hour using
 the bundled installer and runbook. The threat model is documented
 honestly: the work raises the bar substantially against

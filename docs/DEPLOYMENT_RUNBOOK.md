@@ -171,11 +171,36 @@ sudo reboot
 ### D.1 Run the installer
 
 ```bash
-cd /mnt/usb-defense-project/src
+# Shared-folder mount point on this VM is /media/sf_USB-Defense-Project
+# (per the 2026-05-21 sync session). If yours is different, adjust the path.
+cd /media/sf_USB-Defense-Project/src
 sudo ./scripts/install.sh
 ```
 
-Watch for any red errors. Expected output ends with:
+The installer runs nine numbered steps. The final step (`Step 9/9: First-run
+setup ceremony`) is **interactive** as of v0.2.0:
+
+1. Prompts for an admin password twice (8 chars minimum).
+2. Prints a 16-character paper recovery code in a banner. **Write this
+   down on paper now — it is displayed exactly once.** Press Enter when
+   the code is on paper.
+
+If you accidentally interrupt the wizard (Ctrl+C, network drop, etc.) you
+can re-run just the wizard without re-installing the daemon:
+
+```bash
+sudo /usr/lib/usb-defense/venv/bin/python \
+  /media/sf_USB-Defense-Project/src/scripts/setup.py
+```
+
+To rotate the paper code (e.g., if it has been used or compromised):
+
+```bash
+sudo /usr/lib/usb-defense/venv/bin/python \
+  /media/sf_USB-Defense-Project/src/scripts/setup.py --regenerate-recovery
+```
+
+Watch for any red errors during the install proper. Expected final output:
 
 ```
 ================================================================

@@ -4,6 +4,13 @@
 **Target:** Indian defense-grade hardened workstation.
 **Status:** Student project / academic prototype.
 
+> **Note (2026-05-26):** this document describes the v0.1 baseline architecture.
+> v0.2.0 adds an authentication layer, HMAC-signed whitelist, TTY-escape
+> blocking, and a paper-recovery code path. The v0.2 threat-model update
+> and module list is in [`PHASE1_DESIGN.md`](PHASE1_DESIGN.md); the
+> systemd `RestartSec` is now `1`, not `5`. Read this file for the core
+> data flow; read `PHASE1_DESIGN.md` for the current security boundary.
+
 ---
 
 ## 1. Problem Statement

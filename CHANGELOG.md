@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.2.0 — 2026-05-26 — Phase 1 security hardening (pilot-ready)
+
+This release closes the worst gaps from the v0.1 prototype: no-auth whitelist edits, tamperable whitelist file, TTY escape during lockdown, weak systemd unit, no recovery path. Threat model is now an opportunistic outsider with physical access plus a curious user trying to add their own USB — both blocked. Rogue-admin (root user) is detect-only, accepted limitation on a single airgapped box.
+
+### Added
+
+- **`auth.py`** — argon2id-hashed admin password at `/etc/usb-defense/admin.hash`. Fails closed if file isn't 0600 root:root. Minimum 8-char password enforced.
+- **`integrity.py`** — HMAC-SHA256 signature of `whitelist.json` against `whitelist.sig`. Master key (`/etc/usb-defense/master.key`, 0600 root) generated at setup. Daemon **fails closed** on any tamper: whitelist treated as empty, `WHITELIST_TAMPER` event logged.
+- **`recovery.py`** — 16-character Crockford Base32 paper recovery code, displayed once at install. One-time use: invalidated after a single successful unlock. Forgiving normalizer handles O↔0, I/L↔1, U↔V transcription mistakes.
+- **`tty_lockdown.py`** — masks `getty@tty2..6` on lockdown enter, unmasks on clear. Combined with the new X11 `DontVTSwitch` option, `Ctrl+Alt+F<N>` no longer escapes the overlay.
+- **`scripts/setup.py`** — first-run ceremony: prompts admin password, generates master key, initialises signed whitelist, displays paper code. Idempotent only with `--reset`. Supports `--regenerate-recovery` for the case where the paper code has been consumed.
+- **`config/xorg-novtswitch.conf`** — dropped into `/etc/X11/xorg.conf.d/` at install. Disables VT switching and `Ctrl+Alt+Backspace` zap.
+- **UI: lockdown overlay unlock buttons** — admin password or paper recovery code, both via password dialogs that temporarily release the keyboard grab so input can reach the dialog. Wrong-input feedback is surfaced inline on the overlay.
+- **UI: whitelist Add/Remove now requires admin password.** Operation goes through the daemon over IPC; the UI no longer writes the whitelist file directly.
+
+### Changed
+
+- **Daemon IPC commands** — added `add_whitelist_entry`, `remove_whitelist_entry`, `unlock_with_password`, `unlock_with_seed`, `verify_password`. Removed the legacy `force_unlock` env-var trapdoor.
+- **`systemd/usb-defense.service`** — `Type=notify`, `Restart=always`, `RestartSec=1`, `WatchdogSec=30`, `ProtectKernelTunables`, `ProtectKernelModules`, `LockPersonality`, `MemoryDenyWriteExecute`, `RestrictRealtime`, `RestrictNamespaces`, `RestrictSUIDSGID`. Daemon now sends `READY=1`, `WATCHDOG=1`, `STOPPING=1` via inline `sd_notify`.
+- **`ipc.py`** — socket tightened from `0o666` to `0o660` owned by `root:usbdefense`. Non-group local users can no longer connect to the daemon (couldn't probe passwords, couldn't see broadcasts). Graceful fallback to `0o666` with a loud log warning if the group doesn't exist (older install path or non-POSIX dev host).
+- **`scripts/install.sh`** — creates the `usbdefense` group, adds `SUDO_USER` to it (re-login required), installs Xorg server, disables Wayland in GDM (X11 default so `grabKeyboard` actually grabs), invokes the setup wizard as final step.
+- **`scripts/uninstall.sh`** — removes the `usbdefense` group on uninstall, unmasks `getty@tty2..6` defensively, removes `xorg-novtswitch.conf`, restores Wayland in GDM.
+- **`requirements.txt` / `pyproject.toml`** — adds `argon2-cffi>=23.1.0` (free, MIT licence, Windows + Linux wheels).
+- **Version bumped to `0.2.0`** in `__init__.py` and `pyproject.toml`.
+
+### Tests
+
+- 82 passing (was 54), 4 properly skipped (POSIX-only file-permission checks).
+- New suites: `test_auth.py` (12), `test_integrity.py` (10), `test_recovery.py` (13).
+- `test_whitelist.py` gains 7 new `TestWhitelistIntegrity` cases covering missing-sig, tampered JSON, wrong-key, and corrupted-payload paths.
+
+### Documentation
+
+- **`docs/PHASE1_DESIGN.md`** — design doc for senior review, threat model update, file layout, free-only compliance note.
+
+### Production-deployment note
+
+- The default config has `simulator_enabled: true` so the academic
+  demos work out of the box. Real pilots **must** set this to `false`
+  in `/etc/usb-defense/config.yaml` before deployment, otherwise the
+  `simulate_event` IPC path lets any `usbdefense`-group user bypass the
+  admin-password gate by faking a `lockdown_clear`. Documented in
+  `SECURITY.md` and inline in the config file.
+
+### Known limitations carried forward (documented in REPORT §7.2 to be updated in next pass)
+
+- **TTY-1 (discovered during 2026-05-26 VM acceptance):** the claimed TTY-escape block (X11 `DontVTSwitch` + getty mask) does NOT actually block `Ctrl+Alt+F3` because `systemd-logind` dynamically respawns gettys on VT switch, bypassing the systemd-level mask, and GNOME Mutter routes VT-switch combos via logind rather than the X server. Proper fix is `NAutoVTs=0` + `ReserveVT=0` in `/etc/systemd/logind.conf` plus `systemctl restart systemd-logind`. Deferred from Phase 1 to avoid disrupting the live acceptance session; first item on the Phase 2 backlog. v0.2's other six defenses (HMAC sig, admin password gate, paper code, hardened systemd, IPC group, simulator gate) are unaffected.
+- Rogue-root tamper is still detect-only on a fully airgapped box (no off-machine audit log shipping in Phase 1 — explicitly out of scope per user request to keep code lean).
+- BadUSB firmware spoofing remains undetectable below the USB protocol layer.
+
+---
+
 ## 0.1.4 — 2026-05-21 — PERSIST-1 fix + X11 runbook section
 
 ### Bug fixes

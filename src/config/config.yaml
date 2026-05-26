@@ -19,3 +19,12 @@ audit_flat_file: true
 # UX
 notify_on_authorized: true     # toast notification on authorized device
 auto_block_unknown: true       # main enforcement switch
+
+# Simulator (v0.2.0)
+# When true, the `simulate_event` IPC command lets tests/simulate.py drive
+# lockdown enter/clear without real hardware. This is required for the
+# academic-project viva demos. In a real pilot / production deployment set
+# this to FALSE — otherwise anyone in the `usbdefense` group can silently
+# clear a real lockdown by faking a `lockdown_clear` event over the socket
+# (which bypasses the admin password gate).
+simulator_enabled: true
