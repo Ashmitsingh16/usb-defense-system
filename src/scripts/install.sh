@@ -87,7 +87,7 @@ fi
 echo "==> Step 8/9: Installing systemd service + UI launcher"
 cp "$PROJECT_ROOT/systemd/usb-defense.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable usb-defense.service
+systemctl enable --now usb-defense.service
 mkdir -p /etc/xdg/autostart
 cp "$PROJECT_ROOT/systemd/usb-defense-ui.desktop" /etc/xdg/autostart/
 ln -sfn "$INSTALL_DIR/venv/bin/python" /usr/local/bin/usb-defense-py
@@ -118,7 +118,7 @@ echo
 echo "================================================================"
 echo "  USB Defense System installed successfully!"
 echo
-echo "  To start the daemon now:    sudo systemctl start usb-defense"
+echo "  Daemon is already running (auto-started above)."
 echo "  To check daemon status:     sudo systemctl status usb-defense"
 echo "  To view daemon logs:        sudo journalctl -u usb-defense -f"
 echo "  To open the UI:             usb-defense-py -m usbguard_defense.ui.main"
