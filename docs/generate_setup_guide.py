@@ -21,7 +21,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 
-PREFERRED_OUT = Path.home() / "Desktop" / "USB_Final_Project.pdf"
+PREFERRED_OUT = Path.home() / "Desktop" / "USB_Defense_Final.pdf"
 
 
 styles = getSampleStyleSheet()
