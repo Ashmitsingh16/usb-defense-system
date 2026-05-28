@@ -21,7 +21,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 
-PREFERRED_OUT = Path.home() / "Desktop" / "USB_Defense_Setup_Guide.pdf"
+PREFERRED_OUT = Path.home() / "Desktop" / "USB_Final_Project.pdf"
 
 
 styles = getSampleStyleSheet()
@@ -43,11 +43,19 @@ CODE = ParagraphStyle(
     backColor=colors.HexColor("#f2f2f2"), borderPadding=3,
     borderColor=colors.HexColor("#cccccc"), borderWidth=0.5,
 )
+NOTE = ParagraphStyle(
+    "NOTE", parent=P, fontSize=9.2, leading=11.5,
+    leftIndent=8, rightIndent=8, spaceBefore=2, spaceAfter=4,
+    backColor=colors.HexColor("#fff4d6"), borderPadding=4,
+    borderColor=colors.HexColor("#d4a017"), borderWidth=0.6,
+    textColor=colors.HexColor("#5a3e00"),
+)
 
 
 def p(text): return Paragraph(text, P)
 def h1(text): return Paragraph(text, H1)
 def h2(text): return Paragraph(text, H2)
+def note(text): return Paragraph(f"<b>NOTE:</b> {text}", NOTE)
 
 
 def code(text):
@@ -96,6 +104,13 @@ def build_story() -> list:
     ))
     s.append(code("sudo -v"))
     s.append(p("Type your password when asked."))
+    s.append(note(
+        "The password is <b>invisible</b> while you type — no dots, no stars, "
+        "no cursor movement. This is normal Linux behaviour. Type the full "
+        "password and press Enter. If it says <i>\"user is not in the "
+        "sudoers file\"</i>, run <code>su -</code>, then "
+        "<code>usermod -aG wheel YOUR_USERNAME</code>, then log out and back in."
+    ))
 
     s.append(h2("5. Install git and clone the project"))
     s.append(code(
@@ -112,6 +127,14 @@ def build_story() -> list:
         "Then a 16-character recovery code appears in a banner — <b>WRITE "
         "IT ON PAPER</b> (shown only once). Press Enter."
     ))
+    s.append(note(
+        "Two things will surprise a first-time Linux user here. (1) The admin "
+        "password you invent is <b>invisible</b> as you type it — just type 8+ "
+        "characters and press Enter, twice. (2) The 16-character recovery code "
+        "is shown <b>once and never again</b>. If you do not write it on paper "
+        "before pressing Enter, you cannot recover it — you would have to "
+        "uninstall and reinstall. Keep a pen ready before running this command."
+    ))
 
     s.append(h2("7. Switch to GNOME on Xorg session"))
     s.append(p(
@@ -119,6 +142,15 @@ def build_story() -> list:
         "the login screen click your user. <b>Before</b> typing the password, "
         "click the gear icon ⚙ at the bottom-right of the password field "
         "and select <b>GNOME on Xorg</b> (not plain GNOME). Type password, log in."
+    ))
+    s.append(note(
+        "The gear icon ⚙ is small and only appears <b>after</b> you click your "
+        "username but <b>before</b> you type your password. If you already typed "
+        "the password and logged in, log out again and look for it. The menu "
+        "shows <i>GNOME</i>, <i>GNOME Classic</i>, and <i>GNOME on Xorg</i> — "
+        "you must pick <b>GNOME on Xorg</b>. Picking plain <i>GNOME</i> "
+        "(Wayland) will load the app but the lockdown screen will not be able "
+        "to lock the keyboard — Test 2 will visibly fail."
     ))
 
     s.append(h2("8. Verify session and group membership"))
@@ -210,6 +242,26 @@ def build_story() -> list:
         "ls /etc/usb-defense              # 'No such file or directory'\n"
         "systemctl status usb-defense     # 'could not be found'\n"
         "ls ~/usb-defense-system          # 'No such file or directory'"
+    ))
+
+    s.append(h2("If something goes wrong — collect this and send it"))
+    s.append(p(
+        "If any step above fails, run these three commands and send the "
+        "output. Most issues are diagnosable from these alone:"
+    ))
+    s.append(code(
+        "sudo systemctl status usb-defense --no-pager\n"
+        "sudo journalctl -u usb-defense -n 50 --no-pager\n"
+        "cat /tmp/ui.log"
+    ))
+    s.append(p(
+        "Common quick fixes: <b>UI shows \"Disconnected\"</b> → "
+        "<code>sudo systemctl restart usb-defense</code>, wait 3 seconds, "
+        "re-launch UI. <b>Lockdown does not grab keyboard</b> → you are "
+        "probably on Wayland, redo Step 7. <b>Installer fails on "
+        "<code>chown</code></b> → previous install left an immutable log; "
+        "run <code>sudo chattr -a /var/log/usb-defense/events.log</code> "
+        "then re-run the installer."
     ))
 
     s.append(Spacer(1, 0.2 * cm))
