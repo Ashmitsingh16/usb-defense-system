@@ -413,18 +413,11 @@ class Daemon:
             }
 
         if cmd == "list_whitelist":
-            if not self._check_password(msg):
-                self._record_auth_failure("list_whitelist")
-                self.event_log.write("AUTH_FAILURE", {"op": "list_whitelist"})
-                return {
-                    "type": "whitelist_list",
-                    "ok": False,
-                    "error": "unauthorized",
-                }
-            self._record_auth_success()
+            # Read-only; intentionally not password-gated so the UI can
+            # populate the whitelist screen on connect without a prompt.
+            # Add / remove (mutating) are still credentialed below.
             return {
                 "type": "whitelist_list",
-                "ok": True,
                 "entries": [asdict(e) for e in self.whitelist.entries],
             }
         if cmd == "verify_password":

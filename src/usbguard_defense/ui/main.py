@@ -190,24 +190,47 @@ class MainWindow(QMainWindow):
                 self.whitelist_screen.show_status("Device added to whitelist.")
             else:
                 err = event.get("error") or "unknown"
-                msg = ("Wrong admin password." if err == "unauthorized"
-                       else f"Add failed: {err}")
-                self.whitelist_screen.show_status(msg, error=True)
+                if err == "auth_locked_out":
+                    self.whitelist_screen.show_status(
+                        _lockout_message(event), error=True,
+                    )
+                elif err == "unauthorized":
+                    self.whitelist_screen.show_status(
+                        "Wrong admin password.", error=True,
+                    )
+                else:
+                    self.whitelist_screen.show_status(
+                        f"Add failed: {err}", error=True,
+                    )
         elif etype == "remove_whitelist_entry":
             if event.get("ok"):
                 self.whitelist_screen.show_status("Device removed.")
-            elif event.get("error") == "unauthorized":
-                self.whitelist_screen.show_status("Wrong admin password.", error=True)
+            else:
+                err = event.get("error") or ""
+                if err == "auth_locked_out":
+                    self.whitelist_screen.show_status(
+                        _lockout_message(event), error=True,
+                    )
+                elif err == "unauthorized":
+                    self.whitelist_screen.show_status(
+                        "Wrong admin password.", error=True,
+                    )
         elif etype == "unlock_with_password":
             if not event.get("ok"):
-                self.lockdown_overlay.show_unlock_error(
-                    "Wrong password — try again or use the paper code."
-                )
+                if event.get("error") == "auth_locked_out":
+                    self.lockdown_overlay.show_unlock_error(_lockout_message(event))
+                else:
+                    self.lockdown_overlay.show_unlock_error(
+                        "Wrong password — try again or use the paper code."
+                    )
         elif etype == "unlock_with_seed":
             if not event.get("ok"):
-                self.lockdown_overlay.show_unlock_error(
-                    "Code not accepted. Check for typos (O/0, I/L/1, U/V)."
-                )
+                if event.get("error") == "auth_locked_out":
+                    self.lockdown_overlay.show_unlock_error(_lockout_message(event))
+                else:
+                    self.lockdown_overlay.show_unlock_error(
+                        "Code not accepted. Check for typos (O/0, I/L/1, U/V)."
+                    )
         elif etype == "unauthorized_insert":
             d = event.get("device", {})
             desc = f"{d.get('manufacturer','?')} {d.get('product','?')}"
@@ -293,6 +316,21 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Settings saved", 4000)
         except OSError as exc:
             self.statusBar().showMessage(f"Save failed: {exc}", 4000)
+
+
+def _lockout_message(event: dict) -> str:
+    """Render the daemon's ``auth_locked_out`` response as user-facing text."""
+    wait = event.get("retry_after_seconds") or event.get("retry_after_sec") or 0
+    try:
+        wait = int(float(wait))
+    except (TypeError, ValueError):
+        wait = 0
+    if wait <= 0:
+        return "Too many failed attempts — try again shortly."
+    return (
+        f"Too many failed attempts. Wait {wait} second"
+        f"{'s' if wait != 1 else ''} before trying again."
+    )
 
 
 def main() -> int:

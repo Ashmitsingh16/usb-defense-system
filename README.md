@@ -30,6 +30,7 @@ This release closes the TTY-1 gap that v0.2 admitted to, and adds the live intru
 - **Live intrusion timeline on the lockdown screen.** Wrong admin password, wrong recovery code, unauthorized USB re-insert, and any change in the foreground virtual terminal (`/sys/class/tty/tty0/active`) are all recorded with timestamps and shown in a scrolling panel on the lockdown overlay. The same events land in the append-only event log as `INTRUSION_ATTEMPT` rows, so they survive a daemon restart.
 - **Local-time formatting in the Event Log UI.** Event Log entries are now rendered as `YYYY-MM-DD HH:MM:SS` in the operator's local time zone, plus a new `Detail` column that surfaces the intrusion reason inline (no need to open `events.log` by hand).
 - **Lockdown state carries `started_at`.** The persistent lockdown flag now records when the lockdown began, so a UI that reconnects mid-lockdown shows the correct elapsed time and replays the intrusion timeline from disk.
+- **Brute-force throttle on the IPC socket.** After 5 failed credential attempts (across `unlock_with_password`, `unlock_with_seed`, `add_whitelist_entry`, `remove_whitelist_entry`, `verify_password`) the daemon refuses further credentialed commands for 60 s, doubling on every additional threshold breach. Throttled attempts during lockdown are themselves logged as `AUTH_LOCKED_OUT` intrusion attempts. Magic SysRq is also disabled (`kernel.sysrq = 0`) so the kernel's emergency keyboard hotkeys can't reclaim the keyboard from the X overlay.
 
 ## What changed in 0.2.0
 
