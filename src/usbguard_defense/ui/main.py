@@ -135,12 +135,20 @@ class MainWindow(QMainWindow):
         if etype == "lockdown_enter":
             offender = event.get("offender", {})
             started_at = event.get("started_at")
+            # Hide the dashboard window so the only thing on screen during
+            # lockdown is the red overlay — otherwise the two top-level
+            # windows compete for foreground on some compositors and the
+            # screen appears to flicker.
+            self.hide()
             self.lockdown_overlay.show_for(offender, started_at)
             desc = f"{offender.get('manufacturer','?')} {offender.get('product','?')}"
             self.dashboard.set_status_locked(desc)
             self.last_event_text = f"{datetime.now():%H:%M:%S} LOCKDOWN — {desc}"
         elif etype == "lockdown_clear":
             self.lockdown_overlay.hide_overlay()
+            self.show()
+            self.raise_()
+            self.activateWindow()
             self.dashboard.set_status_secure()
             self.last_event_text = f"{datetime.now():%H:%M:%S} unlocked"
             if event.get("warn_regenerate_seed"):
@@ -159,6 +167,7 @@ class MainWindow(QMainWindow):
         elif etype == "status":
             if event.get("locked"):
                 started_at = event.get("started_at")
+                self.hide()
                 self.lockdown_overlay.show_for(
                     event.get("offender") or {}, started_at,
                 )
@@ -175,6 +184,9 @@ class MainWindow(QMainWindow):
             else:
                 if self.lockdown_overlay.isVisible():
                     self.lockdown_overlay.hide_overlay()
+                    self.show()
+                    self.raise_()
+                    self.activateWindow()
                     self.dashboard.set_status_secure()
             if event.get("integrity_failed"):
                 self.statusBar().showMessage(
