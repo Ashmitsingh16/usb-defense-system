@@ -79,6 +79,13 @@ class LockdownOverlay(QWidget):
 
         self.title = QLabel("⚠  SYSTEM LOCKED  ⚠")
         self.title.setObjectName("lockdownTitle")
+        # Keep the title's slot in the layout even when the blink hides
+        # it — otherwise every 700ms the rest of the overlay (including
+        # the unlock buttons) jumps up by ~64px, which made the buttons
+        # very hard to click during the demo.
+        sp = self.title.sizePolicy()
+        sp.setRetainSizeWhenHidden(True)
+        self.title.setSizePolicy(sp)
         layout.addWidget(self.title)
 
         self.subtitle = QLabel("UNAUTHORIZED USB DEVICE DETECTED")
