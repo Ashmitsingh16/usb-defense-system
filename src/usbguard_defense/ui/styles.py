@@ -159,4 +159,31 @@ QPushButton#lockdownButton:hover {
     background-color: #2a0000;
     color: #ffffff;
 }
+QLabel#lockdownStarted {
+    color: #ffaa88;
+    font-size: 14px;
+    qproperty-alignment: AlignCenter;
+}
+QFrame#lockdownTimeline {
+    background-color: #1a0606;
+    border: 1px solid #5a1a1a;
+    border-radius: 8px;
+}
+QLabel#lockdownTimelineHeader {
+    color: #ff8888;
+    font-size: 14px;
+    font-weight: 700;
+}
+QLabel#lockdownTimelineEmpty {
+    color: #cc7777;
+    font-size: 12px;
+    font-style: italic;
+}
+QListWidget#lockdownTimelineList {
+    background-color: #0a0000;
+    color: #ffe4b5;
+    border: 1px solid #3a1010;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 13px;
+}
 """

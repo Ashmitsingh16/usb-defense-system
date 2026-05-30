@@ -22,9 +22,7 @@ auto_block_unknown: true       # main enforcement switch
 
 # Simulator (v0.2.0)
 # When true, the `simulate_event` IPC command lets tests/simulate.py drive
-# lockdown enter/clear without real hardware. This is required for the
-# academic-project viva demos. In a real pilot / production deployment set
-# this to FALSE — otherwise anyone in the `usbdefense` group can silently
-# clear a real lockdown by faking a `lockdown_clear` event over the socket
-# (which bypasses the admin password gate).
-simulator_enabled: true
+# lockdown enter/clear without real hardware. Even when enabled, the daemon
+# now requires the admin password on every simulate_event call. Set to true
+# only when you need to run the viva demos (Demos 3, 5, 6, 7, 8).
+simulator_enabled: false

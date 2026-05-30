@@ -1,12 +1,16 @@
 """Daemon ↔ UI inter-process communication via Unix socket + JSON lines.
 
-v0.2.0: the socket is now mode 0660 owned by `root:usbdefense` so only
-processes whose user is in the `usbdefense` group can connect. If the
-group does not exist (older install, manual deploy), we fall back to
-0666 with a loud warning — better permissive-and-usable than tight-and-
-broken on a workstation. install.sh creates the group and adds the
-SUDO_USER to it; new operators must be added with
-`sudo usermod -a -G usbdefense <username>`.
+v0.3.0: the socket is mode 0660 owned by `root:usbdefense` and we now
+**fail closed** if the `usbdefense` group is missing. Earlier versions
+fell back to mode 0666 with a warning, which silently opened the IPC to
+every local user — exactly what the password gate is supposed to
+prevent. install.sh creates the group; new operators must be added with
+`sudo usermod -a -G usbdefense <username>`. On non-POSIX hosts (e.g. the
+Windows test harness) the group lookup is skipped and permissions are
+left to the OS.
+
+Override `USB_DEFENSE_IPC_ALLOW_OPEN=1` (root only) for ad-hoc dev
+testing — produces a loud warning and runs at 0666.
 """
 
 from __future__ import annotations
@@ -54,30 +58,44 @@ class IPCServer:
         self._thread.start()
 
     def _apply_socket_permissions(self) -> None:
-        """Tight default (0660 root:usbdefense) with graceful fallback to 0666."""
-        gid = self._lookup_usbdefense_gid()
-        if gid is not None:
-            try:
-                os.chown(self.socket_path, 0, gid)
-                os.chmod(self.socket_path, 0o660)
-                return
-            except (PermissionError, OSError) as exc:
-                log.warning(
-                    "Could not chown socket to root:usbdefense (%s); "
-                    "falling back to 0666 — anyone on this host can connect.",
-                    exc,
-                )
-        else:
+        """0660 root:usbdefense, fail closed if the group is missing.
+
+        Non-POSIX hosts skip the group/chown machinery entirely (the test
+        suite runs on Windows). The explicit dev escape hatch is the
+        ``USB_DEFENSE_IPC_ALLOW_OPEN=1`` env var; with it the socket goes
+        to 0666 with a loud warning so the choice is recorded in the
+        journal.
+        """
+        if os.name != "posix" or grp is None:
+            return
+        if os.environ.get("USB_DEFENSE_IPC_ALLOW_OPEN") == "1":
             log.warning(
-                "Group 'usbdefense' does not exist on this host; falling "
-                "back to socket mode 0666. Run `sudo groupadd usbdefense` "
-                "and `sudo usermod -a -G usbdefense <ui-user>` then "
-                "restart the daemon to tighten this.",
+                "USB_DEFENSE_IPC_ALLOW_OPEN=1 — running with insecure "
+                "0666 IPC socket. Anyone on this host can talk to the "
+                "daemon. Do NOT use this outside dev testing.",
+            )
+            try:
+                os.chmod(self.socket_path, 0o666)
+            except OSError:
+                pass
+            return
+        gid = self._lookup_usbdefense_gid()
+        if gid is None:
+            raise RuntimeError(
+                "Group 'usbdefense' does not exist — refusing to start "
+                "with an open IPC socket. Run `sudo groupadd usbdefense` "
+                "and `sudo usermod -a -G usbdefense <ui-user>`, then "
+                "restart the daemon. To bypass for dev only, set "
+                "USB_DEFENSE_IPC_ALLOW_OPEN=1.",
             )
         try:
-            os.chmod(self.socket_path, 0o666)
-        except OSError:
-            pass
+            os.chown(self.socket_path, 0, gid)
+            os.chmod(self.socket_path, 0o660)
+        except (PermissionError, OSError) as exc:
+            raise RuntimeError(
+                f"Could not lock down IPC socket to root:usbdefense "
+                f"({exc}); refusing to start to avoid an open socket."
+            ) from exc
 
     @staticmethod
     def _lookup_usbdefense_gid() -> Optional[int]:

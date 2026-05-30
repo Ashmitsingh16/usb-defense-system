@@ -38,12 +38,10 @@ class Config:
     audit_journald: bool = True
     audit_flat_file: bool = True
     # Simulator: allows tests/simulate.py to drive lockdown enter/clear via
-    # IPC without real USB hardware. Required for the academic-project
-    # viva demos (Demos 3, 5, 6, 7, 8 use it). MUST be False in a real
-    # pilot deployment because anyone in the usbdefense group can
-    # otherwise bypass the password gate by faking a `lockdown_clear`
-    # event.
-    simulator_enabled: bool = True
+    # IPC without real USB hardware. Even when enabled the daemon now
+    # password-gates every simulate_event call. Default off; flip on only
+    # for the viva demos.
+    simulator_enabled: bool = False
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "usbguard-defense"
-version = "0.2.0"
+version = "0.3.0"
 description = "Whitelist-based USB device guard with full system lockdown for Rocky Linux"
 readme = "../README.md"
 requires-python = ">=3.9"

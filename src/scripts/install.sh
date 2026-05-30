@@ -71,7 +71,7 @@ echo "==> Step 6/9: Configuring USBGuard"
 cp "$PROJECT_ROOT/config/usbguard-rules.conf" /etc/usbguard/rules.conf
 systemctl enable --now usbguard
 
-echo "==> Step 7/9: Configuring X11 (disable VT switching, prefer Xorg session)"
+echo "==> Step 7/9: Configuring X11 + logind (block VT switching at every layer)"
 mkdir -p /etc/X11/xorg.conf.d
 cp "$PROJECT_ROOT/config/xorg-novtswitch.conf" /etc/X11/xorg.conf.d/99-usbdefense-novtswitch.conf
 # Tell GDM to default to GNOME-on-Xorg, not Wayland. grabKeyboard/grabMouse
@@ -83,6 +83,34 @@ if [[ -f /etc/gdm/custom.conf ]]; then
   grep -q '^WaylandEnable=' /etc/gdm/custom.conf || \
     sed -i '/^\[daemon\]/a WaylandEnable=false' /etc/gdm/custom.conf || true
 fi
+
+# Persistent logind drop-in: tells systemd-logind to never auto-allocate
+# extra virtual terminals. Combined with the runtime drop-in the daemon
+# writes during lockdown, this closes the gap where logind would
+# respawn a getty as soon as we masked it.
+mkdir -p /etc/systemd/logind.conf.d
+cp "$PROJECT_ROOT/config/logind-no-autovts.conf" \
+   /etc/systemd/logind.conf.d/50-usbdefense.conf
+systemctl kill -s HUP systemd-logind.service || true
+
+# Mask the autovt@ aliases for tty1..6 permanently. logind uses these
+# (not getty@) to spawn a console when a user switches VT. Masking
+# getty@ alone — as v0.2 did — was not enough.
+for n in 1 2 3 4 5 6; do
+  systemctl mask "autovt@tty${n}.service" 2>/dev/null || true
+done
+
+# Disable Magic SysRq. Without this, a local user can press
+# Alt+SysRq+R to take the keyboard back from the X overlay
+# (defeating grabKeyboard), or Alt+SysRq+REISUB to force-reboot
+# straight out of lockdown.
+cat > /etc/sysctl.d/99-usbdefense.conf <<'EOF'
+# Installed by USB Defense System.
+# Disables Magic SysRq so the lockdown overlay cannot be bypassed
+# via the kernel's emergency keyboard hotkeys.
+kernel.sysrq = 0
+EOF
+sysctl --system >/dev/null 2>&1 || true
 
 echo "==> Step 8/9: Installing systemd service + UI launcher"
 cp "$PROJECT_ROOT/systemd/usb-defense.service" /etc/systemd/system/

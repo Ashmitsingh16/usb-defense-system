@@ -23,10 +23,12 @@ import logging
 import os
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
 from dataclasses import asdict
+from datetime import datetime, timezone
 
 from . import __version__
 from .alarm import AlarmPlayer
@@ -44,7 +46,7 @@ from .integrity import ensure_master_key
 from .ipc import IPCServer
 from .monitor import USBEvent, USBMonitor
 from .recovery import verify_and_consume
-from .tty_lockdown import lock_tty, unlock_tty
+from .tty_lockdown import TTYActiveWatcher, lock_tty, unlock_tty
 from .usbguard_iface import USBGuard
 from .whitelist import Whitelist, WhitelistEntry
 
@@ -94,8 +96,17 @@ class Daemon:
         )
         self.locked = False
         self.lock_offender: dict | None = None
+        self.lock_started_at: str | None = None
         self._running = True
         self._watchdog_thread: threading.Thread | None = None
+        self._tty_watcher = TTYActiveWatcher(self._on_tty_switch_attempt)
+        # Unlock-attempt throttle: after AUTH_FAILURE_THRESHOLD bad tries
+        # the daemon refuses further unlock_with_password / unlock_with_seed
+        # / verify_password / add_whitelist_entry / remove_whitelist_entry /
+        # list_whitelist for AUTH_LOCKOUT_SECONDS. Counts reset on success.
+        self._auth_failures = 0
+        self._auth_lockout_until: float = 0.0
+        self._auth_lock = threading.Lock()
 
     def start(self) -> None:
         log.info("USB Defense daemon v%s starting", __version__)
@@ -154,9 +165,13 @@ class Daemon:
             payload = None
         if isinstance(payload, dict):
             self.lock_offender = payload.get("offender")
+            self.lock_started_at = payload.get("started_at")
+        if self.lock_started_at is None:
+            self.lock_started_at = datetime.now(timezone.utc).isoformat()
         LOCKDOWN_FLAG.write_text("restored\n")
-        # Re-apply TTY mask since we're back in lockdown
+        # Re-apply TTY mask and intrusion watcher since we're back in lockdown
         lock_tty()
+        self._tty_watcher.start()
 
     def _on_usb_event(self, event: USBEvent) -> None:
         log.info("USB event: %s %s", event.action, event.short_desc())
@@ -191,6 +206,16 @@ class Daemon:
             "type": "unauthorized_insert",
             "device": event_dict,
         })
+        if self.locked:
+            # Re-attempt during an active lockdown. Treat as an intrusion
+            # attempt so it surfaces on the lockdown screen timeline.
+            self._record_intrusion(
+                "USB_RETRY",
+                f"Unauthorized USB re-inserted: "
+                f"{event.manufacturer} {event.product} "
+                f"({event.fingerprint()})",
+                extra={"device": event_dict},
+            )
         if self.config.auto_block_unknown:
             self._enter_lockdown(event_dict)
 
@@ -206,15 +231,26 @@ class Daemon:
             return
         self.locked = True
         self.lock_offender = offender
+        self.lock_started_at = datetime.now(timezone.utc).isoformat()
         log.warning("ENTERING LOCKDOWN due to %s", offender.get("fingerprint"))
         PERSISTENT_LOCKDOWN_FLAG.parent.mkdir(parents=True, exist_ok=True)
-        flag_payload = json.dumps({"locked": True, "offender": offender}) + "\n"
+        flag_payload = json.dumps({
+            "locked": True,
+            "offender": offender,
+            "started_at": self.lock_started_at,
+        }) + "\n"
         PERSISTENT_LOCKDOWN_FLAG.write_text(flag_payload)
         LOCKDOWN_FLAG.write_text("active\n")
-        self.ipc.broadcast({"type": "lockdown_enter", "offender": offender})
+        self.ipc.broadcast({
+            "type": "lockdown_enter",
+            "offender": offender,
+            "started_at": self.lock_started_at,
+        })
         if self.config.alarm_enabled:
             self.alarm.start()
         lock_tty()
+        self._tty_watcher.start()
+        self._trigger_screen_lock()
 
     def _clear_lockdown(self, reason: str, unlock_device: dict | None = None,
                         warn_regenerate_seed: bool = False) -> None:
@@ -222,8 +258,10 @@ class Daemon:
             return
         self.locked = False
         self.lock_offender = None
+        self.lock_started_at = None
         log.info("Lockdown cleared: %s", reason)
         self.alarm.stop()
+        self._tty_watcher.stop()
         try: PERSISTENT_LOCKDOWN_FLAG.unlink()
         except FileNotFoundError: pass
         try: LOCKDOWN_FLAG.unlink()
@@ -235,6 +273,36 @@ class Daemon:
             "unlock_device": unlock_device,
             "warn_regenerate_seed": warn_regenerate_seed,
         })
+
+    def _record_intrusion(self, kind: str, detail: str,
+                          extra: dict | None = None) -> None:
+        """Log a tampering/intrusion attempt during an active lockdown.
+
+        Writes a structured event to the append-only event log and
+        broadcasts an ``intrusion_attempt`` IPC event so the lockdown
+        overlay can display it on its timeline in real time.
+        """
+        ts = datetime.now(timezone.utc).isoformat()
+        record = {"kind": kind, "detail": detail, "ts": ts}
+        if extra:
+            record.update(extra)
+        self.event_log.write("INTRUSION_ATTEMPT", record)
+        self.ipc.broadcast({
+            "type": "intrusion_attempt",
+            "kind": kind,
+            "detail": detail,
+            "ts": ts,
+        })
+        log.warning("INTRUSION_ATTEMPT %s — %s", kind, detail)
+
+    def _on_tty_switch_attempt(self, new_tty: str, baseline: str) -> None:
+        if not self.locked:
+            return
+        self._record_intrusion(
+            "TTY_SWITCH",
+            f"Foreground VT changed from {baseline} to {new_tty}",
+            extra={"new_tty": new_tty, "baseline_tty": baseline},
+        )
 
     def _allow_in_usbguard(self, event: USBEvent) -> None:
         d = USBGuard.find_by_fingerprint(event.vendor_id, event.product_id, event.serial)
@@ -261,6 +329,9 @@ class Daemon:
             "devnode": event.devnode,
         }
 
+    AUTH_FAILURE_THRESHOLD = 5
+    AUTH_LOCKOUT_SECONDS = 60  # doubles each consecutive threshold hit
+
     def _check_password(self, msg: dict) -> bool:
         pw = msg.get("password")
         if not isinstance(pw, str) or not pw:
@@ -271,28 +342,104 @@ class Daemon:
             log.error("Password verify error: %s", exc)
             return False
 
+    def _auth_locked_out(self) -> float:
+        """Return remaining lockout seconds, or 0 if attempts are allowed."""
+        with self._auth_lock:
+            remaining = self._auth_lockout_until - time.monotonic()
+            return remaining if remaining > 0 else 0.0
+
+    def _record_auth_failure(self, op: str) -> None:
+        with self._auth_lock:
+            self._auth_failures += 1
+            n = self._auth_failures
+        if n >= self.AUTH_FAILURE_THRESHOLD:
+            # Exponential backoff: 60s, 120s, 240s, …
+            overshoot = n - self.AUTH_FAILURE_THRESHOLD
+            wait = self.AUTH_LOCKOUT_SECONDS * (2 ** overshoot)
+            with self._auth_lock:
+                self._auth_lockout_until = time.monotonic() + wait
+            self.event_log.write(
+                "AUTH_LOCKOUT",
+                {"op": op, "failures": n, "lockout_seconds": wait},
+            )
+            log.warning(
+                "Auth lockout engaged after %d failures (op=%s); refusing "
+                "credential commands for %ds",
+                n, op, wait,
+            )
+
+    def _record_auth_success(self) -> None:
+        with self._auth_lock:
+            self._auth_failures = 0
+            self._auth_lockout_until = 0.0
+
+    def _trigger_screen_lock(self) -> None:
+        """Best-effort: ask logind to lock every active session."""
+        if not getattr(self.config, "lockdown_screen_lock", False):
+            return
+        try:
+            subprocess.run(
+                ["loginctl", "lock-sessions"],
+                check=False, capture_output=True, timeout=5,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            log.warning("loginctl lock-sessions failed: %s", exc)
+
     def _handle_ipc_command(self, msg: dict) -> dict:
         cmd = msg.get("cmd")
+        # Commands that DO NOT require credentials and bypass the lockout.
         if cmd == "status":
             return {
                 "type": "status",
                 "locked": self.locked,
                 "offender": self.lock_offender,
+                "started_at": self.lock_started_at,
                 "whitelist_size": len(self.whitelist.entries),
                 "integrity_failed": self.whitelist.integrity_failed,
                 "version": __version__,
+                "auth_lockout_remaining": self._auth_locked_out(),
             }
+
+        # Everything below requires a valid admin password (or recovery code
+        # for unlock_with_seed). Throttle first so brute-forcing the
+        # password or paper code over the socket isn't free.
+        wait = self._auth_locked_out()
+        if wait > 0:
+            return {
+                "type": cmd or "error",
+                "ok": False,
+                "error": "auth_locked_out",
+                "retry_after_seconds": wait,
+            }
+
         if cmd == "list_whitelist":
+            if not self._check_password(msg):
+                self._record_auth_failure("list_whitelist")
+                self.event_log.write("AUTH_FAILURE", {"op": "list_whitelist"})
+                return {
+                    "type": "whitelist_list",
+                    "ok": False,
+                    "error": "unauthorized",
+                }
+            self._record_auth_success()
             return {
                 "type": "whitelist_list",
+                "ok": True,
                 "entries": [asdict(e) for e in self.whitelist.entries],
             }
         if cmd == "verify_password":
-            return {"type": "verify_password", "ok": self._check_password(msg)}
+            ok = self._check_password(msg)
+            if ok:
+                self._record_auth_success()
+            else:
+                self._record_auth_failure("verify_password")
+            return {"type": "verify_password", "ok": ok}
         if cmd == "add_whitelist_entry":
             if not self._check_password(msg):
+                self._record_auth_failure("add_whitelist_entry")
                 self.event_log.write("AUTH_FAILURE", {"op": "add_whitelist_entry"})
                 return {"type": "add_whitelist_entry", "ok": False, "error": "unauthorized"}
+            self._record_auth_success()
             entry_data = msg.get("entry") or {}
             try:
                 entry = WhitelistEntry.new(
@@ -312,8 +459,10 @@ class Daemon:
             return {"type": "add_whitelist_entry", "ok": True, "entry_id": entry.id}
         if cmd == "remove_whitelist_entry":
             if not self._check_password(msg):
+                self._record_auth_failure("remove_whitelist_entry")
                 self.event_log.write("AUTH_FAILURE", {"op": "remove_whitelist_entry"})
                 return {"type": "remove_whitelist_entry", "ok": False, "error": "unauthorized"}
+            self._record_auth_success()
             entry_id = msg.get("entry_id", "")
             removed = self.whitelist.remove(entry_id)
             if removed:
@@ -322,16 +471,30 @@ class Daemon:
             return {"type": "remove_whitelist_entry", "ok": removed}
         if cmd == "unlock_with_password":
             if not self._check_password(msg):
+                self._record_auth_failure("unlock_with_password")
                 self.event_log.write("UNLOCK_AUTH_FAILURE", {"method": "password"})
+                if self.locked:
+                    self._record_intrusion(
+                        "WRONG_PASSWORD",
+                        "Failed admin-password unlock attempt",
+                    )
                 return {"type": "unlock_with_password", "ok": False}
+            self._record_auth_success()
             self.event_log.write("UNLOCK_SUCCESS", {"method": "password"})
             self._clear_lockdown(reason="admin password")
             return {"type": "unlock_with_password", "ok": True}
         if cmd == "unlock_with_seed":
             code = msg.get("code", "")
             if not isinstance(code, str) or not verify_and_consume(code):
+                self._record_auth_failure("unlock_with_seed")
                 self.event_log.write("UNLOCK_AUTH_FAILURE", {"method": "paper_code"})
+                if self.locked:
+                    self._record_intrusion(
+                        "WRONG_RECOVERY_CODE",
+                        "Failed paper-recovery-code unlock attempt",
+                    )
                 return {"type": "unlock_with_seed", "ok": False}
+            self._record_auth_success()
             self.event_log.write("UNLOCK_SUCCESS", {"method": "paper_code"})
             self._clear_lockdown(
                 reason="paper recovery code",
@@ -342,6 +505,11 @@ class Daemon:
             if not self.config.simulator_enabled:
                 self.event_log.write("SIMULATOR_BLOCKED", {"reason": "disabled in config"})
                 return {"error": "simulator disabled by config"}
+            if not self._check_password(msg):
+                self._record_auth_failure("simulate_event")
+                self.event_log.write("AUTH_FAILURE", {"op": "simulate_event"})
+                return {"type": "simulate_event", "ok": False, "error": "unauthorized"}
+            self._record_auth_success()
             payload = msg.get("event") or {}
             ptype = payload.get("type")
             if ptype == "lockdown_enter":

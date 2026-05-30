@@ -134,7 +134,8 @@ class MainWindow(QMainWindow):
         etype = event.get("type")
         if etype == "lockdown_enter":
             offender = event.get("offender", {})
-            self.lockdown_overlay.show_for(offender)
+            started_at = event.get("started_at")
+            self.lockdown_overlay.show_for(offender, started_at)
             desc = f"{offender.get('manufacturer','?')} {offender.get('product','?')}"
             self.dashboard.set_status_locked(desc)
             self.last_event_text = f"{datetime.now():%H:%M:%S} LOCKDOWN — {desc}"
@@ -150,9 +151,23 @@ class MainWindow(QMainWindow):
                     "Generate a new one with:\n"
                     "    sudo python3 scripts/setup.py --regenerate-recovery"
                 )
+        elif etype == "intrusion_attempt":
+            kind = event.get("kind", "UNKNOWN")
+            detail = event.get("detail", "")
+            ts = event.get("ts", "")
+            self.lockdown_overlay.record_intrusion(kind, detail, ts)
         elif etype == "status":
             if event.get("locked"):
-                self.lockdown_overlay.show_for(event.get("offender") or {})
+                started_at = event.get("started_at")
+                self.lockdown_overlay.show_for(
+                    event.get("offender") or {}, started_at,
+                )
+                # If the UI is attaching to an already-active lockdown
+                # (we restarted the UI but the daemon was holding the
+                # line), pull any intrusion attempts that already
+                # happened during this lockdown out of the persistent
+                # event log so the timeline isn't empty on reconnect.
+                self._rehydrate_intrusion_timeline(started_at)
                 off = event.get("offender") or {}
                 self.dashboard.set_status_locked(
                     f"{off.get('manufacturer','?')} {off.get('product','?')}"
@@ -241,6 +256,32 @@ class MainWindow(QMainWindow):
             self.lockdown_overlay.show_unlock_error("Daemon offline.")
             return
         self.ipc.send_command({"cmd": "unlock_with_seed", "code": code})
+
+    def _rehydrate_intrusion_timeline(self, started_at_iso: str | None) -> None:
+        """Refill the lockdown-overlay timeline from the on-disk log.
+
+        Called when the UI attaches to an in-progress lockdown (after a
+        UI restart). Reads the recent event log, picks rows of type
+        ``INTRUSION_ATTEMPT`` with ``ts >= started_at_iso``, and replays
+        them in order.
+        """
+        if not started_at_iso:
+            return
+        try:
+            events = self.event_logger.read_recent(limit=500)
+        except Exception:
+            return
+        for ev in events:
+            if ev.get("type") != "INTRUSION_ATTEMPT":
+                continue
+            ts = ev.get("ts", "")
+            if ts < started_at_iso:
+                continue
+            self.lockdown_overlay.record_intrusion(
+                ev.get("kind", "UNKNOWN"),
+                ev.get("detail", ""),
+                ts,
+            )
 
     def _save_settings(self, new_dict: dict) -> None:
         import yaml

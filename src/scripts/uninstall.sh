@@ -17,12 +17,25 @@ echo "==> Stopping services"
 systemctl stop usb-defense.service 2>/dev/null || true
 systemctl disable usb-defense.service 2>/dev/null || true
 
-# If the daemon crashed mid-lockdown the getty units are still masked.
-# Always unmask them before walking away so the user isn't locked
-# out of their console.
-for n in 2 3 4 5 6; do
-  systemctl unmask "getty@tty${n}.service" 2>/dev/null || true
+# If the daemon crashed mid-lockdown the getty / autovt units are still
+# masked. Always unmask them before walking away so the user isn't
+# locked out of their console.
+for n in 1 2 3 4 5 6; do
+  systemctl unmask "getty@tty${n}.service"  2>/dev/null || true
+  systemctl unmask "autovt@tty${n}.service" 2>/dev/null || true
 done
+
+# Drop the persistent logind drop-in and the runtime one (if the
+# daemon crashed before it could clean up).
+rm -f /etc/systemd/logind.conf.d/50-usbdefense.conf
+rm -f /run/systemd/logind.conf.d/50-usbdefense-lock.conf
+systemctl kill -s HUP systemd-logind.service 2>/dev/null || true
+
+# Restore Magic SysRq to the kernel default. install.sh set it to 0;
+# remove the drop-in so the next reboot picks up whatever the
+# distribution defaults to.
+rm -f /etc/sysctl.d/99-usbdefense.conf
+sysctl --system >/dev/null 2>&1 || true
 
 echo "==> Removing files"
 rm -f /etc/systemd/system/usb-defense.service

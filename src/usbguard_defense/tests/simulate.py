@@ -16,7 +16,9 @@ Demo coverage:
 
 from __future__ import annotations
 
+import getpass
 import json
+import os
 import socket
 import sys
 import time
@@ -140,10 +142,16 @@ def main() -> int:
         print(f"Daemon socket {IPC_SOCKET} not found — is the daemon running?")
         return 2
 
-    # Wrap as a daemon command so the daemon broadcasts the payload to every
-    # connected UI client (and triggers real lockdown / unlock state changes
-    # for lockdown_enter / lockdown_clear).
-    envelope = {"cmd": "simulate_event", "event": payload}
+    # simulate_event is password-gated. Take it from $USB_DEFENSE_ADMIN_PASSWORD
+    # if set (handy for non-interactive demo scripts), otherwise prompt.
+    password = os.environ.get("USB_DEFENSE_ADMIN_PASSWORD")
+    if not password:
+        password = getpass.getpass("admin password: ")
+    envelope = {
+        "cmd": "simulate_event",
+        "event": payload,
+        "password": password,
+    }
     sock.sendall((json.dumps(envelope) + "\n").encode("utf-8"))
     print(f"Sent: {scenario}")
     time.sleep(0.2)
