@@ -1,10 +1,31 @@
 #!/usr/bin/env bash
-# USB Defense System — installer for Rocky Linux 9
+# USB Defense System — installer for Rocky Linux 9 and RHEL 8.
 #
 # Run as root from the project source directory:
 #   sudo ./scripts/install.sh
+#
+# RHEL 8 note: the package declares requires-python>=3.9 but RHEL 8's
+# default python3 is 3.6. This installer auto-enables the python39
+# AppStream module and uses python3.9 for the venv when needed.
 
 set -euo pipefail
+
+# Print a clear "which step failed" message instead of just dumping a
+# bash trace when something inside set -e trips.
+CURRENT_STEP="pre-flight"
+on_err() {
+  local rc=$?
+  echo
+  echo "================================================================"
+  echo "  ERROR: install.sh failed at: ${CURRENT_STEP}"
+  echo "  Exit code: ${rc}    Line: ${BASH_LINENO[0]:-?}"
+  echo
+  echo "  Nothing past this point has been applied. Fix the underlying"
+  echo "  problem and re-run: sudo ./scripts/install.sh"
+  echo "================================================================"
+  exit "$rc"
+}
+trap on_err ERR
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="/usr/lib/usb-defense"
@@ -23,6 +44,27 @@ REBOOT_REQUIRED=0
 
 echo "==> Installing USB Defense System..."
 
+# Pick a Python interpreter that satisfies pyproject.toml's
+# requires-python>=3.9. On Rocky 9 the system python3 is 3.9, so we use
+# it directly. On RHEL 8 the system python3 is 3.6, so we enable the
+# python39 AppStream module first.
+PYTHON_BIN=""
+pick_python() {
+  local cand ver
+  for cand in python3.12 python3.11 python3.10 python3.9 python3; do
+    command -v "$cand" >/dev/null 2>&1 || continue
+    ver=$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "")
+    case "$ver" in
+      3.9|3.10|3.11|3.12|3.13)
+        PYTHON_BIN="$cand"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+CURRENT_STEP="Step 1/9: installing system packages"
 echo "==> Step 1/9: Installing system packages (this may take a while)"
 # Note: on Rocky/RHEL, venv ships with the base python3 package — there is no separate python3-venv.
 # X11 is installed alongside Wayland so the lockdown overlay has a working
@@ -39,6 +81,21 @@ dnf install -y \
   libxkbcommon-x11 \
   --setopt=install_weak_deps=False
 
+# If the system python3 is older than 3.9 (RHEL 8 case), pull python39
+# from the AppStream module so step 4 has an interpreter that satisfies
+# the package's requires-python>=3.9.
+if ! pick_python; then
+  echo "  System python3 is older than 3.9 — enabling python39 AppStream module"
+  dnf module enable -y python39 || true
+  dnf install -y python39 python39-pip
+  pick_python || {
+    echo "ERROR: could not install Python >= 3.9 — required by pyproject.toml"
+    exit 1
+  }
+fi
+echo "  Using $PYTHON_BIN ($($PYTHON_BIN --version 2>&1))"
+
+CURRENT_STEP="Step 2/9: creating directories and group"
 echo "==> Step 2/9: Creating directories and 'usbdefense' group"
 mkdir -p "$INSTALL_DIR" "$ETC_DIR" "$LOG_DIR" "$LIB_DIR" "$INSTALL_DIR/assets"
 # The IPC socket is owned by root:usbdefense (0660) so only users in this
@@ -49,31 +106,43 @@ if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
   echo "  Added $SUDO_USER to usbdefense group (re-login required for it to take effect)"
 fi
 
+CURRENT_STEP="Step 3/9: copying source code"
 echo "==> Step 3/9: Copying source code"
 cp -r "$PROJECT_ROOT/usbguard_defense" "$INSTALL_DIR/"
 cp -f "$PROJECT_ROOT/pyproject.toml" "$INSTALL_DIR/" 2>/dev/null || true
 cp -f "$PROJECT_ROOT/requirements.txt" "$INSTALL_DIR/" 2>/dev/null || true
-cp -r "$PROJECT_ROOT/assets/." "$INSTALL_DIR/assets/" 2>/dev/null || \
-  echo "  (no assets to copy yet — alarm.wav must be placed manually)"
+cp -r "$PROJECT_ROOT/assets/." "$INSTALL_DIR/assets/" 2>/dev/null || true
+# Guarantee an alarm.wav exists. The shipped one is normally copied above;
+# if the repo was stripped, fall back to generating one with stdlib only
+# (no venv needed — generate_alarm.py uses just wave/math/struct).
+if [[ ! -f "$INSTALL_DIR/assets/alarm.wav" ]]; then
+  echo "  No alarm.wav shipped — generating a default 2s siren"
+  "$PYTHON_BIN" "$PROJECT_ROOT/scripts/generate_alarm.py" \
+    "$INSTALL_DIR/assets/alarm.wav"
+fi
 
+CURRENT_STEP="Step 4/9: creating virtualenv and installing package"
 echo "==> Step 4/9: Creating Python virtualenv and installing package"
-python3 -m venv "$INSTALL_DIR/venv"
+"$PYTHON_BIN" -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
 # Proper editable install via pyproject.toml. Installs PyQt5/pyudev/PyYAML
 # and (new in v0.2) argon2-cffi as deps.
 "$INSTALL_DIR/venv/bin/pip" install -e "$INSTALL_DIR/"
 
+CURRENT_STEP="Step 5/9: installing config files"
 echo "==> Step 5/9: Installing config files"
 [[ -f "$ETC_DIR/config.yaml" ]] || cp "$PROJECT_ROOT/config/config.yaml" "$ETC_DIR/"
 # Note: whitelist.json is initialised by the setup wizard (step 9) so it
 # can be HMAC-signed at the same time. We don't copy a stub here.
 
+CURRENT_STEP="Step 6/9: configuring USBGuard"
 echo "==> Step 6/9: Configuring USBGuard"
 [[ -f /etc/usbguard/rules.conf.original ]] || \
   cp /etc/usbguard/rules.conf /etc/usbguard/rules.conf.original 2>/dev/null || true
 cp "$PROJECT_ROOT/config/usbguard-rules.conf" /etc/usbguard/rules.conf
 systemctl enable --now usbguard
 
+CURRENT_STEP="Step 7/9: staging X11 + logind hardening"
 echo "==> Step 7/9: Staging X11 + logind hardening (activates on next reboot)"
 # All changes in this step are written to disk but NOT applied to the running
 # system. Applying them live (HUP logind, mask autovt on the active TTY,
@@ -125,6 +194,7 @@ EOF
 
 REBOOT_REQUIRED=1
 
+CURRENT_STEP="Step 8/9: installing systemd service and UI launcher"
 echo "==> Step 8/9: Installing systemd service + UI launcher"
 cp "$PROJECT_ROOT/systemd/usb-defense.service" /etc/systemd/system/
 systemctl daemon-reload
@@ -143,17 +213,28 @@ chmod 600 "$LOG_DIR/events.log"
 chattr +a "$LOG_DIR/events.log" 2>/dev/null || \
   echo "  (chattr +a failed — filesystem may not support it)"
 
+CURRENT_STEP="Step 9/9: first-run setup ceremony"
 echo "==> Step 9/9: First-run setup ceremony"
 echo "    You will set an admin password and write down a one-time"
 echo "    paper recovery code. This is the one ceremony that requires"
 echo "    your attention — don't skip it."
 echo
-"$INSTALL_DIR/venv/bin/python" "$PROJECT_ROOT/scripts/setup.py" || {
+# Run the wizard without the ERR trap, so a user typo (e.g. mismatched
+# passwords, then they re-try and finish successfully) doesn't kill the
+# whole installer with a generic "step failed" message. We surface the
+# wizard's own exit code instead.
+trap - ERR
+set +e
+"$INSTALL_DIR/venv/bin/python" "$PROJECT_ROOT/scripts/setup.py"
+setup_rc=$?
+set -e
+trap on_err ERR
+if [[ $setup_rc -ne 0 ]]; then
   echo
-  echo "  Setup wizard did not complete. You can re-run it with:"
+  echo "  Setup wizard did not complete (exit $setup_rc). You can re-run it with:"
   echo "    sudo $INSTALL_DIR/venv/bin/python $PROJECT_ROOT/scripts/setup.py"
   exit 1
-}
+fi
 
 echo
 echo "================================================================"
@@ -171,8 +252,11 @@ echo "  Config files:               $ETC_DIR/"
 echo "  Source code:                $INSTALL_DIR/usbguard_defense/"
 echo "  Event log:                  $LOG_DIR/events.log"
 echo
-echo "  IMPORTANT: place an alarm sound at $INSTALL_DIR/assets/alarm.wav"
-echo "             before triggering lockdown — otherwise no audio."
+if [[ ! -f "$INSTALL_DIR/assets/alarm.wav" ]]; then
+  echo "  IMPORTANT: alarm.wav was not installed. Generate one with:"
+  echo "      sudo $PYTHON_BIN $PROJECT_ROOT/scripts/generate_alarm.py \\"
+  echo "           $INSTALL_DIR/assets/alarm.wav"
+fi
 echo "  Log out and back in for the X11 session change AND the"
 echo "  'usbdefense' group membership to take effect."
 echo
