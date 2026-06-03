@@ -196,9 +196,14 @@ REBOOT_REQUIRED=1
 
 CURRENT_STEP="Step 8/9: installing systemd service and UI launcher"
 echo "==> Step 8/9: Installing systemd service + UI launcher"
+# Order matters: we set up the append-only event log and install
+# the service file, but DO NOT start the daemon yet. The setup wizard
+# in step 9 creates /etc/usb-defense/master.key and the signed
+# whitelist; starting the daemon before that means it boots into a
+# half-configured state and may race the perm setup on events.log.
 cp "$PROJECT_ROOT/systemd/usb-defense.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now usb-defense.service
+systemctl enable usb-defense.service
 mkdir -p /etc/xdg/autostart
 cp "$PROJECT_ROOT/systemd/usb-defense-ui.desktop" /etc/xdg/autostart/
 ln -sfn "$INSTALL_DIR/venv/bin/python" /usr/local/bin/usb-defense-py
@@ -235,6 +240,26 @@ if [[ $setup_rc -ne 0 ]]; then
   echo "    sudo $INSTALL_DIR/venv/bin/python $PROJECT_ROOT/scripts/setup.py"
   exit 1
 fi
+
+# Now that the master key, whitelist, admin password and recovery code
+# are all in place, start the daemon. Verify it actually came up — if
+# Type=notify times out the unit will report failed.
+CURRENT_STEP="starting and verifying usb-defense daemon"
+echo
+echo "==> Starting USB Defense daemon..."
+systemctl start usb-defense.service
+sleep 1
+if ! systemctl is-active --quiet usb-defense.service; then
+  echo
+  echo "  ERROR: usb-defense daemon failed to start. Recent logs:"
+  echo
+  journalctl -u usb-defense.service -n 30 --no-pager || true
+  echo
+  echo "  Fix the underlying problem and:"
+  echo "      sudo systemctl restart usb-defense.service"
+  exit 1
+fi
+echo "  Daemon is active."
 
 echo
 echo "================================================================"
