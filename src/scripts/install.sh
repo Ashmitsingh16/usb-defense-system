@@ -18,6 +18,9 @@ if [[ "$EUID" -ne 0 ]]; then
   exit 1
 fi
 
+# Tracks whether step 7 staged hardening that needs a reboot to take effect.
+REBOOT_REQUIRED=0
+
 echo "==> Installing USB Defense System..."
 
 echo "==> Step 1/9: Installing system packages (this may take a while)"
@@ -71,9 +74,14 @@ echo "==> Step 6/9: Configuring USBGuard"
 cp "$PROJECT_ROOT/config/usbguard-rules.conf" /etc/usbguard/rules.conf
 systemctl enable --now usbguard
 
-echo "==> Step 7/9: Configuring X11 + logind (block VT switching at every layer)"
+echo "==> Step 7/9: Staging X11 + logind hardening (activates on next reboot)"
+# All changes in this step are written to disk but NOT applied to the running
+# system. Applying them live (HUP logind, mask autovt on the active TTY,
+# sysctl --system) can drop the seat of an active graphical session and
+# leave the workstation with no input. We require a reboot instead.
 mkdir -p /etc/X11/xorg.conf.d
 cp "$PROJECT_ROOT/config/xorg-novtswitch.conf" /etc/X11/xorg.conf.d/99-usbdefense-novtswitch.conf
+
 # Tell GDM to default to GNOME-on-Xorg, not Wayland. grabKeyboard/grabMouse
 # is a silent no-op on Wayland; X11 is required for the overlay to actually
 # trap input. Existing user sessions are not affected — change applies
@@ -85,32 +93,37 @@ if [[ -f /etc/gdm/custom.conf ]]; then
 fi
 
 # Persistent logind drop-in: tells systemd-logind to never auto-allocate
-# extra virtual terminals. Combined with the runtime drop-in the daemon
-# writes during lockdown, this closes the gap where logind would
-# respawn a getty as soon as we masked it.
+# extra virtual terminals. Combined with masked autovt@ units, this closes
+# the gap where logind would respawn a getty as soon as we masked it.
+# NOTE: not HUPing logind here — re-reading NAutoVTs=0 / ReserveVT=0 on a
+# running graphical session can drop the active seat and kill input.
 mkdir -p /etc/systemd/logind.conf.d
 cp "$PROJECT_ROOT/config/logind-no-autovts.conf" \
    /etc/systemd/logind.conf.d/50-usbdefense.conf
-systemctl kill -s HUP systemd-logind.service || true
 
-# Mask the autovt@ aliases for tty1..6 permanently. logind uses these
-# (not getty@) to spawn a console when a user switches VT. Masking
-# getty@ alone — as v0.2 did — was not enough.
+# Stage the autovt@ttyN masks by writing symlinks to /dev/null in
+# /etc/systemd/system. This is exactly what `systemctl mask` does on disk,
+# but it does not touch the running systemd state — so the masks take
+# effect on the next boot without disturbing the active session's TTY.
 for n in 1 2 3 4 5 6; do
-  systemctl mask "autovt@tty${n}.service" 2>/dev/null || true
+  ln -sfn /dev/null "/etc/systemd/system/autovt@tty${n}.service"
 done
 
 # Disable Magic SysRq. Without this, a local user can press
 # Alt+SysRq+R to take the keyboard back from the X overlay
 # (defeating grabKeyboard), or Alt+SysRq+REISUB to force-reboot
 # straight out of lockdown.
+# NOTE: not running `sysctl --system` here — applying kernel.sysrq=0 live
+# removes the one emergency keyboard escape (Alt+SysRq+REISUB) right when
+# a frozen X session would need it. The setting takes effect on next boot.
 cat > /etc/sysctl.d/99-usbdefense.conf <<'EOF'
 # Installed by USB Defense System.
 # Disables Magic SysRq so the lockdown overlay cannot be bypassed
 # via the kernel's emergency keyboard hotkeys.
 kernel.sysrq = 0
 EOF
-sysctl --system >/dev/null 2>&1 || true
+
+REBOOT_REQUIRED=1
 
 echo "==> Step 8/9: Installing systemd service + UI launcher"
 cp "$PROJECT_ROOT/systemd/usb-defense.service" /etc/systemd/system/
@@ -166,3 +179,20 @@ echo
 echo "  To grant another user access to the UI:"
 echo "      sudo usermod -a -G usbdefense <username>"
 echo "================================================================"
+
+if [[ "$REBOOT_REQUIRED" -eq 1 ]]; then
+  echo
+  echo "****************************************************************"
+  echo "*  REBOOT REQUIRED                                              *"
+  echo "*                                                               *"
+  echo "*  Step 7 staged X11 + logind + sysctl hardening on disk but    *"
+  echo "*  did NOT apply it to the running system, to avoid freezing    *"
+  echo "*  an active graphical session. The hardening (no VT switch,    *"
+  echo "*  autovt masking, kernel.sysrq=0) takes effect on next boot.   *"
+  echo "*                                                               *"
+  echo "*  Until you reboot, the daemon is running but the lockdown     *"
+  echo "*  overlay can be bypassed via Ctrl+Alt+F1..F6 or SysRq.        *"
+  echo "*                                                               *"
+  echo "*  Reboot now:    sudo systemctl reboot                         *"
+  echo "****************************************************************"
+fi
