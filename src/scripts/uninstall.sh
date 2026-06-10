@@ -85,6 +85,11 @@ if [[ "$WIPE" -eq 1 ]]; then
   echo "==> Wiping secrets and event log (--wipe was passed)"
   # The event log is +a (append-only); clear that flag before unlinking.
   chattr -a /var/log/usb-defense/events.log 2>/dev/null || true
+  # The whitelist + signature are +i (immutable) to block terminal edits;
+  # clear that flag too so rm -rf can succeed without "Operation not
+  # permitted". Wildcard so any +i sibling files also get unlocked.
+  chattr -i /etc/usb-defense/whitelist.json 2>/dev/null || true
+  chattr -i /etc/usb-defense/whitelist.sig 2>/dev/null || true
   rm -rf /etc/usb-defense /var/log/usb-defense /var/lib/usb-defense
 fi
 

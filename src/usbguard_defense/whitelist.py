@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
+import subprocess
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -24,6 +26,31 @@ from .integrity import sign, verify
 
 
 log = logging.getLogger(__name__)
+
+
+def _toggle_immutable(path: Path, set_flag: bool) -> None:
+    """Best-effort chattr +i / -i so the whitelist cannot be edited from a
+    second terminal (even by root) without explicitly clearing the flag.
+
+    Silent no-op if chattr is missing or the filesystem does not support
+    immutable attributes (tmpfs, NFS, some test layouts). Failures here
+    never break a save — the HMAC signature is still the primary defense.
+    """
+    if not path.exists():
+        return
+    if shutil.which("chattr") is None:
+        return
+    flag = "+i" if set_flag else "-i"
+    try:
+        subprocess.run(
+            ["chattr", flag, str(path)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 @dataclass
@@ -112,6 +139,11 @@ class Whitelist:
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Clear +i on existing files so os.replace can succeed. If they
+        # aren't immutable yet (first save), this is a silent no-op.
+        _toggle_immutable(self.path, False)
+        if self.master_key is not None:
+            _toggle_immutable(self.sig_path, False)
         payload = json.dumps(
             {"version": 1, "devices": [asdict(e) for e in self.entries]},
             indent=2,
@@ -133,6 +165,11 @@ class Whitelist:
                 os.chmod(self.sig_path, 0o600)
             except PermissionError:
                 pass
+        # Re-apply +i so any subsequent terminal edit fails at the open()
+        # call, not just at signature verification. Best-effort.
+        _toggle_immutable(self.path, True)
+        if self.master_key is not None:
+            _toggle_immutable(self.sig_path, True)
         self.integrity_failed = False
 
     def match(self, vendor_id: str, product_id: str, serial: str) -> Optional[WhitelistEntry]:

@@ -31,10 +31,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from . import __version__
-from .alarm import AlarmPlayer
 from .auth import verify_admin_password
 from .config import (
-    ASSETS_DIR,
     LOCKDOWN_FLAG,
     PERSISTENT_LOCKDOWN_FLAG,
     PID_FILE,
@@ -90,10 +88,6 @@ class Daemon:
             self.event_log.write("WHITELIST_TAMPER", {"detected_at": "startup"})
         self.ipc = IPCServer()
         self.monitor = USBMonitor(self._on_usb_event)
-        self.alarm = AlarmPlayer(
-            sound_path=ASSETS_DIR / self.config.alarm_sound,
-            volume=self.config.alarm_volume,
-        )
         self.locked = False
         self.lock_offender: dict | None = None
         self.lock_started_at: str | None = None
@@ -140,7 +134,6 @@ class Daemon:
 
     def _shutdown(self) -> None:
         self.monitor.stop()
-        self.alarm.stop()
         self.ipc.stop()
         self._remove_pid()
         log.info("Daemon stopped")
@@ -246,8 +239,6 @@ class Daemon:
             "offender": offender,
             "started_at": self.lock_started_at,
         })
-        if self.config.alarm_enabled:
-            self.alarm.start()
         lock_tty()
         self._tty_watcher.start()
         self._trigger_screen_lock()
@@ -260,7 +251,6 @@ class Daemon:
         self.lock_offender = None
         self.lock_started_at = None
         log.info("Lockdown cleared: %s", reason)
-        self.alarm.stop()
         self._tty_watcher.stop()
         try: PERSISTENT_LOCKDOWN_FLAG.unlink()
         except FileNotFoundError: pass

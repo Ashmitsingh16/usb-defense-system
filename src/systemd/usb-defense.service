@@ -10,6 +10,10 @@ NotifyAccess=main
 ExecStart=/usr/lib/usb-defense/venv/bin/python -m usbguard_defense.daemon
 Restart=always
 RestartSec=1
+# Default TimeoutStartSec is 90s, which makes the installer feel "stuck
+# at step 9" when the daemon fails to notify ready. 30s is enough for
+# a healthy boot on slow hardware and surfaces real failures fast.
+TimeoutStartSec=30
 TimeoutStopSec=10
 WatchdogSec=30
 
@@ -35,9 +39,6 @@ RestrictNamespaces=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 ReadWritePaths=/etc/usb-defense /var/log/usb-defense /var/lib/usb-defense
-
-# Need access to audio device for alarm.
-SupplementaryGroups=audio
 
 StandardOutput=journal
 StandardError=journal

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QCheckBox, QFormLayout, QLabel, QPushButton, QSlider, QSpinBox,
+    QCheckBox, QFormLayout, QLabel, QPushButton, QSpinBox,
     QVBoxLayout, QWidget,
 )
 
@@ -23,15 +22,6 @@ class SettingsWidget(QWidget):
         layout.addWidget(heading)
 
         form = QFormLayout()
-
-        self.alarm_enabled = QCheckBox("Play audible alarm during lockdown")
-        self.alarm_enabled.setChecked(self._config.get("alarm_enabled", True))
-        form.addRow(self.alarm_enabled)
-
-        self.alarm_volume = QSlider(Qt.Horizontal)
-        self.alarm_volume.setRange(0, 100)
-        self.alarm_volume.setValue(self._config.get("alarm_volume", 80))
-        form.addRow("Alarm volume:", self.alarm_volume)
 
         self.grace_period = QSpinBox()
         self.grace_period.setRange(0, 60)
@@ -59,8 +49,6 @@ class SettingsWidget(QWidget):
 
     def _save(self) -> None:
         self._config.update({
-            "alarm_enabled": self.alarm_enabled.isChecked(),
-            "alarm_volume": self.alarm_volume.value(),
             "lockdown_grace_period_sec": self.grace_period.value(),
             "require_unlock_key": self.require_unlock_key.isChecked(),
             "notify_on_authorized": self.notify_on_authorized.isChecked(),

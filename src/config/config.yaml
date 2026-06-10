@@ -1,11 +1,6 @@
 # USB Defense System — main configuration
 # Lives at /etc/usb-defense/config.yaml on the deployed system.
 
-# Audible alarm
-alarm_enabled: true
-alarm_volume: 80          # 0-100
-alarm_sound: alarm.wav    # filename in /usr/lib/usb-defense/assets/
-
 # Lockdown behavior
 lockdown_grace_period_sec: 0   # 0 = lockdown immediately on unauthorized USB
 lockdown_screen_lock: true     # also lock the screen via loginctl

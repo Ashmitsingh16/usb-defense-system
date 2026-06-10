@@ -12,7 +12,6 @@ When a USB device is plugged in, the daemon checks its VID:PID:Serial against a 
 - If it isn't:
   - USBGuard refuses to bind it to any driver.
   - A full-screen overlay grabs the keyboard and disables VT switching at every layer (X11 + systemd-logind + masked getty/autovt units).
-  - The alarm plays.
   - The event is written to an append-only file and to journald.
   - Every subsequent tampering attempt during the lockdown is timestamped and shown live on the lockdown screen and in the Event Log.
 

@@ -21,14 +21,10 @@ IPC_SOCKET = RUNTIME_DIR / "ipc.sock"
 LOCKDOWN_FLAG = RUNTIME_DIR / "lockdown.flag"
 PID_FILE = RUNTIME_DIR / "daemon.pid"
 PERSISTENT_LOCKDOWN_FLAG = Path("/var/lib/usb-defense/lockdown.flag")
-ASSETS_DIR = Path("/usr/lib/usb-defense/assets")
 
 
 @dataclass
 class Config:
-    alarm_enabled: bool = True
-    alarm_volume: int = 80  # 0-100
-    alarm_sound: str = "alarm.wav"  # filename in ASSETS_DIR
     lockdown_grace_period_sec: int = 0  # 0 = immediate
     lockdown_screen_lock: bool = True
     require_unlock_key: bool = True  # only USBs flagged can_unlock=True can clear lockdown
