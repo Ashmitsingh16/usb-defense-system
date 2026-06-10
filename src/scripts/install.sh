@@ -143,6 +143,7 @@ dnf install -y \
   xcb-util xcb-util-image xcb-util-keysyms \
   xcb-util-renderutil xcb-util-wm xcb-util-cursor \
   libxkbcommon-x11 \
+  mesa-libGL \
   --setopt=install_weak_deps=False
 
 # If the system python3 is older than 3.9 (RHEL 8 case), pull python39

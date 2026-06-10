@@ -115,15 +115,19 @@ def build() -> None:
         "git clone https://github.com/Ashmitsingh16/usb-defense-system.git\n"
         "cd usb-defense-system"
     ))
-    P("Optional &mdash; pre-install the X11 session (skip on Fedora 41+, see notes):")
+    P("Install the X11 session for your distro (do this BEFORE the installer; the lockdown overlay needs X11):")
     flow.append(_code(
         "# RHEL 8 / Rocky 9:\n"
         "sudo dnf install gnome-classic-session\n"
+        "\n"
         "# Fedora 40:\n"
         "sudo dnf install gnome-session-xsession\n"
-        "# Fedora 41+ (no GNOME X11 session ships):\n"
+        "\n"
+        "# Fedora 41+ (no GNOME-on-Xorg ships any more):\n"
         "sudo dnf install i3"
     ))
+    P("Log out, click the gear icon at the GDM login screen, pick the X11 session, then verify:")
+    flow.append(_code("echo $XDG_SESSION_TYPE        # expected: x11"))
     P("Run the installer:")
     flow.append(_code("sudo ./scripts/install.sh"))
     P(
